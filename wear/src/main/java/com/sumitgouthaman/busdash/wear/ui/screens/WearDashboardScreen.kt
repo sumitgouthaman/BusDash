@@ -37,6 +37,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -190,27 +192,31 @@ class WearDashboardViewModel : ViewModel() {
         }
     }
 
-    fun getCachedArrivals(stopId: String): List<ObaArrivalAndDeparture>? {
+    fun getCachedArrivals(stopId: String): Pair<List<ObaArrivalAndDeparture>, Long>? {
         val cached = arrivalsCache[stopId]
         if (cached != null && (System.currentTimeMillis() - cached.timestamp) < ARRIVALS_CACHE_TTL) {
-            return cached.arrivals
+            return cached.arrivals to cached.timestamp
         }
         return null
     }
 
-    suspend fun getArrivalsForStop(stopId: String): List<ObaArrivalAndDeparture> {
-        val cached = getCachedArrivals(stopId)
-        if (cached != null) return cached
+    suspend fun getArrivalsForStop(stopId: String, force: Boolean = false): Pair<List<ObaArrivalAndDeparture>, Long>? {
+        if (!force) {
+            val cached = getCachedArrivals(stopId)
+            if (cached != null) return cached
+        }
         
-        val api = obaApi ?: return emptyList()
-        val key = obaApiKey ?: return emptyList()
+        val api = obaApi ?: return null
+        val key = obaApiKey ?: return null
         return try {
             val response = api.getArrivalsAndDeparturesForStop(stopId = stopId, key = key)
             val arrivals = response.data.entry?.arrivalsAndDepartures ?: emptyList()
-            arrivalsCache[stopId] = CachedArrivals(arrivals, System.currentTimeMillis())
-            arrivals
+            val now = System.currentTimeMillis()
+            arrivalsCache[stopId] = CachedArrivals(arrivals, now)
+            arrivals to now
         } catch (e: Exception) {
-            arrivalsCache[stopId]?.arrivals ?: emptyList()
+            val oldCached = arrivalsCache[stopId]
+            if (oldCached != null) oldCached.arrivals to oldCached.timestamp else null
         }
     }
 }
@@ -341,25 +347,46 @@ private fun WearStopCard(
     useMetric: Boolean,
     viewModel: WearDashboardViewModel
 ) {
+    val initialCache = viewModel.getCachedArrivals(stopWithDistance.stop.id)
     var arrivals by remember(stopWithDistance.stop.id) { 
-        mutableStateOf<List<ObaArrivalAndDeparture>?>(viewModel.getCachedArrivals(stopWithDistance.stop.id)) 
+        mutableStateOf<List<ObaArrivalAndDeparture>?>(initialCache?.first) 
     }
+    var lastFetchTime by remember(stopWithDistance.stop.id) {
+        mutableStateOf<Long?>(initialCache?.second)
+    }
+    var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
     var refreshTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
         refreshTrigger++
+        var ticks = 0
         while (true) {
-            delay(60_000L)
-            refreshTrigger++
+            delay(1_000L)
+            currentTime = System.currentTimeMillis()
+            ticks++
+            if (ticks % 60 == 0) {
+                refreshTrigger++
+            }
         }
     }
 
     LaunchedEffect(refreshTrigger) {
-        arrivals = viewModel.getArrivalsForStop(stopWithDistance.stop.id)
+        val isForced = refreshTrigger > 1
+        val result = viewModel.getArrivalsForStop(stopWithDistance.stop.id, isForced)
+        if (result != null) {
+            arrivals = result.first
+            lastFetchTime = result.second
+        }
     }
+
+    val haptic = LocalHapticFeedback.current
 
     Card(
         onClick = {},
+        onLongClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            refreshTrigger += 2
+        },
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 2.dp),
@@ -471,6 +498,24 @@ private fun WearStopCard(
                         )
                     }
                 }
+            }
+
+            // Footer
+            if (lastFetchTime != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                val diff: Long = currentTime - lastFetchTime!!
+                val staleness = when {
+                    diff < 60000L -> "${diff / 1000L}s ago"
+                    diff < 3600000L -> "${diff / 60000L}m ago"
+                    else -> "${diff / 3600000L}h ago"
+                }
+                Text(
+                    text = "Updated $staleness",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TransitOnSurfaceDim,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }

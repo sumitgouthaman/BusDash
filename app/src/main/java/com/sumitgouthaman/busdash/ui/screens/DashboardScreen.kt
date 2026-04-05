@@ -148,11 +148,11 @@ class DashboardViewModel : ViewModel() {
         }
     }
 
-    suspend fun getArrivalsForStop(stopId: String): FetchResult {
-        // Check cache first
+    suspend fun getArrivalsForStop(stopId: String, force: Boolean = false): FetchResult {
+        // Check cache first if not forced
         val cached = arrivalsCache[stopId]
-        if (cached != null && (System.currentTimeMillis() - cached.timestamp) < ARRIVALS_CACHE_TTL) {
-            return FetchResult.Success(cached.arrivals)
+        if (!force && cached != null && (System.currentTimeMillis() - cached.timestamp) < ARRIVALS_CACHE_TTL) {
+            return FetchResult.Success(cached.arrivals, cached.timestamp)
         }
 
         val api = obaApi ?: return FetchResult.Error
@@ -161,15 +161,16 @@ class DashboardViewModel : ViewModel() {
             val response = api.getArrivalsAndDeparturesForStop(stopId = stopId, key = key)
             if (response.data.limitExceeded) {
                 // Return cached data if available, otherwise rate limited
-                if (cached != null) FetchResult.Success(cached.arrivals) else FetchResult.RateLimited
+                if (cached != null) FetchResult.Success(cached.arrivals, cached.timestamp) else FetchResult.RateLimited
             } else {
                 val arrivals = response.data.entry?.arrivalsAndDepartures ?: emptyList()
-                arrivalsCache[stopId] = CachedArrivals(arrivals, System.currentTimeMillis())
-                FetchResult.Success(arrivals)
+                val now = System.currentTimeMillis()
+                arrivalsCache[stopId] = CachedArrivals(arrivals, now)
+                FetchResult.Success(arrivals, now)
             }
         } catch (e: retrofit2.HttpException) {
             if (e.code() == 429) {
-                if (cached != null) FetchResult.Success(cached.arrivals) else FetchResult.RateLimited
+                if (cached != null) FetchResult.Success(cached.arrivals, cached.timestamp) else FetchResult.RateLimited
             } else {
                 FetchResult.Error
             }
@@ -183,7 +184,7 @@ class DashboardViewModel : ViewModel() {
 data class StopWithDistance(val stop: ObaStop, val distanceMeters: Float)
 
 sealed class FetchResult {
-    data class Success(val arrivals: List<ObaArrivalAndDeparture>) : FetchResult()
+    data class Success(val arrivals: List<ObaArrivalAndDeparture>, val timestamp: Long) : FetchResult()
     object RateLimited : FetchResult()
     object Error : FetchResult()
 }
@@ -293,7 +294,7 @@ fun DashboardScreen(
                                     appPreferences = appPreferences,
                                     useMetric = useMetric,
                                     loadPriority = index,
-                                    fetchArrivals = { viewModel.getArrivalsForStop(stopWD.stop.id) },
+                                    fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
                                     onClick = { onStopClick(stopWD.stop.id) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
                                 )
@@ -320,7 +321,7 @@ fun DashboardScreen(
                                     appPreferences = appPreferences,
                                     useMetric = useMetric,
                                     loadPriority = starredCount + index,
-                                    fetchArrivals = { viewModel.getArrivalsForStop(stopWD.stop.id) },
+                                    fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
                                     onClick = { onStopClick(stopWD.stop.id) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
                                 )
@@ -351,7 +352,7 @@ fun StopItemRow(
     appPreferences: AppPreferences,
     useMetric: Boolean,
     loadPriority: Int = 0,
-    fetchArrivals: suspend () -> FetchResult,
+    fetchArrivals: suspend (force: Boolean) -> FetchResult,
     onClick: () -> Unit,
     onStarClick: () -> Unit
 ) {
@@ -360,24 +361,33 @@ fun StopItemRow(
     var refreshTrigger by remember { mutableIntStateOf(0) }
     var isLoading by remember { mutableStateOf(true) }
     var arrivalsState by remember { mutableStateOf<List<ObaArrivalAndDeparture>?>(null) }
+    var lastFetchTime by remember { mutableStateOf<Long?>(null) }
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     LaunchedEffect(Unit) {
         // Stagger initial load: closer stops load first
         kotlinx.coroutines.delay(loadPriority * 300L)
         refreshTrigger++ // force initial fetch after delay
+        var ticks = 0
         while (true) {
-            kotlinx.coroutines.delay(60_000L)
-            refreshTrigger++
+            kotlinx.coroutines.delay(1_000L)
+            currentTime = System.currentTimeMillis()
+            ticks++
+            if (ticks % 60 == 0) {
+                refreshTrigger++
+            }
         }
     }
 
     LaunchedEffect(refreshTrigger) {
         isLoading = true
         var backoff = 1000L
+        val isForced = refreshTrigger > 1
         while (true) {
-            when (val result = fetchArrivals()) {
+            when (val result = fetchArrivals(isForced)) {
                 is FetchResult.Success -> {
                     arrivalsState = result.arrivals
+                    lastFetchTime = result.timestamp
                     isLoading = false
                     break
                 }
@@ -589,6 +599,23 @@ fun StopItemRow(
                         }
                     }
                 }
+            }
+
+            if (lastFetchTime != null && !isLoading) {
+                Spacer(modifier = Modifier.height(14.dp))
+                val diff = currentTime - lastFetchTime!!
+                val staleness = when {
+                    diff < 60000 -> "${diff / 1000}s ago"
+                    diff < 3600000 -> "${diff / 60000}m ago"
+                    else -> "${diff / 3600000}h ago"
+                }
+                Text(
+                    text = "Updated $staleness",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
         }
     }
