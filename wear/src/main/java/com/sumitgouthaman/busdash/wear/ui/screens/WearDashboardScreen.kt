@@ -41,6 +41,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
@@ -189,11 +190,18 @@ class WearDashboardViewModel : ViewModel() {
         }
     }
 
-    suspend fun getArrivalsForStop(stopId: String): List<ObaArrivalAndDeparture> {
+    fun getCachedArrivals(stopId: String): List<ObaArrivalAndDeparture>? {
         val cached = arrivalsCache[stopId]
         if (cached != null && (System.currentTimeMillis() - cached.timestamp) < ARRIVALS_CACHE_TTL) {
             return cached.arrivals
         }
+        return null
+    }
+
+    suspend fun getArrivalsForStop(stopId: String): List<ObaArrivalAndDeparture> {
+        val cached = getCachedArrivals(stopId)
+        if (cached != null) return cached
+        
         val api = obaApi ?: return emptyList()
         val key = obaApiKey ?: return emptyList()
         return try {
@@ -202,7 +210,7 @@ class WearDashboardViewModel : ViewModel() {
             arrivalsCache[stopId] = CachedArrivals(arrivals, System.currentTimeMillis())
             arrivals
         } catch (e: Exception) {
-            cached?.arrivals ?: emptyList()
+            arrivalsCache[stopId]?.arrivals ?: emptyList()
         }
     }
 }
@@ -309,8 +317,10 @@ private fun WearDashboardContent(
                 )
             }
         } else {
-            items(stops.size) { index ->
-                val stopWD = stops[index]
+            items(
+                items = stops,
+                key = { it.stop.id }
+            ) { stopWD ->
                 WearStopCard(
                     stopWithDistance = stopWD,
                     isStarred = stopWD.stop.id in starredIds,
@@ -331,7 +341,9 @@ private fun WearStopCard(
     useMetric: Boolean,
     viewModel: WearDashboardViewModel
 ) {
-    var arrivals by remember { mutableStateOf<List<ObaArrivalAndDeparture>?>(null) }
+    var arrivals by remember(stopWithDistance.stop.id) { 
+        mutableStateOf<List<ObaArrivalAndDeparture>?>(viewModel.getCachedArrivals(stopWithDistance.stop.id)) 
+    }
     var refreshTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
@@ -429,25 +441,27 @@ private fun WearStopCard(
                 )
             } else {
                 // Group by route, show top 3 routes with next arrival each
-                val groupedByRoute = arrivalsList
-                    .groupBy { it.routeId }
-                    .map { (routeId, group) ->
-                        val sorted = group.sortedBy {
-                            if (it.predictedDepartureTime > 0) it.predictedDepartureTime
-                            else it.scheduledDepartureTime
-                        }
-                        val isRouteStarred = starredRoutes.contains("${stopWithDistance.stop.id}_${routeId}")
-                        Triple(sorted.first(), sorted.take(2), isRouteStarred)
-                    }
-                    .sortedWith(
-                        compareByDescending<Triple<ObaArrivalAndDeparture, List<ObaArrivalAndDeparture>, Boolean>> { it.third }
-                            .thenBy {
-                                val a = it.first
-                                if (a.predictedDepartureTime > 0) a.predictedDepartureTime
-                                else a.scheduledDepartureTime
+                val groupedByRoute = remember(arrivalsList, starredRoutes) {
+                    arrivalsList
+                        .groupBy { it.routeId }
+                        .map { (routeId, group) ->
+                            val sorted = group.sortedBy {
+                                if (it.predictedDepartureTime > 0) it.predictedDepartureTime
+                                else it.scheduledDepartureTime
                             }
-                    )
-                    .take(3)
+                            val isRouteStarred = starredRoutes.contains("${stopWithDistance.stop.id}_${routeId}")
+                            Triple(sorted.first(), sorted.take(2), isRouteStarred)
+                        }
+                        .sortedWith(
+                            compareByDescending<Triple<ObaArrivalAndDeparture, List<ObaArrivalAndDeparture>, Boolean>> { it.third }
+                                .thenBy {
+                                    val a = it.first
+                                    if (a.predictedDepartureTime > 0) a.predictedDepartureTime
+                                    else a.scheduledDepartureTime
+                                }
+                        )
+                        .take(3)
+                }
 
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     groupedByRoute.forEach { (_, routeArrivals, isRouteStarred) ->
