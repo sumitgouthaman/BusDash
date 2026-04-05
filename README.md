@@ -4,12 +4,6 @@ A fast, glanceable transit dashboard for Android and Wear OS. Built for daily co
 
 Powered by the [OneBusAway API](https://onebusaway.org/).
 
-## What it does
-
-BusDash shows real-time arrivals for your nearby stops. Star the stops you care about and they float to the top. Open the app, see your bus times, put your phone away. That's it.
-
-Unlike the full OneBusAway app, BusDash is not a trip planner or a transit map. It's a dashboard — optimized for the "when's my bus?" check you do twice a day.
-
 ## Demo
 
 <table>
@@ -27,6 +21,12 @@ Unlike the full OneBusAway app, BusDash is not a trip planner or a transit map. 
     <td align="center">Wear OS</td>
   </tr>
 </table>
+
+## What it does
+
+BusDash shows real-time arrivals for your nearby stops. Star the stops you care about and they float to the top. Open the app, see your bus times, put your phone away. That's it.
+
+Unlike the full OneBusAway app, BusDash is not a trip planner or a transit map. It's a dashboard — optimized for the "when's my bus?" check you do twice a day.
 
 ## Features
 
