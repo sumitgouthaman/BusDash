@@ -3,6 +3,7 @@ package com.sumitgouthaman.busdash.data
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
@@ -22,6 +23,7 @@ class AppPreferences(private val context: Context) {
         val STARRED_STOPS = stringSetPreferencesKey("starred_stops")
         // Format for starred routes: "stopId_routeId"
         val STARRED_ROUTES = stringSetPreferencesKey("starred_routes")
+        val USE_METRIC_DISTANCE = booleanPreferencesKey("use_metric_distance")
     }
 
     val apiKey: Flow<String?> = dataStore.data.map { preferences ->
@@ -30,6 +32,10 @@ class AppPreferences(private val context: Context) {
 
     val isConfigured: Flow<Boolean> = dataStore.data.map { preferences ->
         !preferences[OBA_API_KEY].isNullOrBlank()
+    }
+
+    val useMetricDistance: Flow<Boolean> = dataStore.data.map { preferences ->
+        preferences[USE_METRIC_DISTANCE] ?: false
     }
 
     val baseUrl: Flow<String> = dataStore.data.map { preferences ->
@@ -45,10 +51,11 @@ class AppPreferences(private val context: Context) {
         preferences[STARRED_ROUTES] ?: emptySet()
     }
 
-    suspend fun saveConfig(apiKey: String, baseUrl: String) {
+    suspend fun saveConfig(apiKey: String, baseUrl: String, useMetric: Boolean) {
         dataStore.edit { preferences ->
             preferences[OBA_API_KEY] = apiKey.trim()
             preferences[OBA_BASE_URL] = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+            preferences[USE_METRIC_DISTANCE] = useMetric
         }
     }
 

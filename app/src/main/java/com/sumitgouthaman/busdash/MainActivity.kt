@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -16,6 +17,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.WearDataSync
 import com.sumitgouthaman.busdash.ui.screens.DashboardScreen
 import com.sumitgouthaman.busdash.ui.screens.SettingsScreen
 import com.sumitgouthaman.busdash.ui.screens.StopDetailsScreen
@@ -44,6 +46,12 @@ fun BusDashApp() {
     val appPreferences = remember { AppPreferences(context) }
     
     val isConfigured by appPreferences.isConfigured.collectAsState(initial = null)
+
+    // Start syncing config to Wear OS companion
+    val wearDataSync = remember { WearDataSync(context, appPreferences) }
+    LaunchedEffect(Unit) {
+        wearDataSync.startSync()
+    }
 
     // Wait until we know if it's configured
     if (isConfigured == null) {

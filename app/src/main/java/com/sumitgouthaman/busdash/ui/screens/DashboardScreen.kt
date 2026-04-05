@@ -26,6 +26,7 @@ import com.sumitgouthaman.busdash.data.OneBusAwayApi
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.unit.sp
+import com.sumitgouthaman.busdash.ui.utils.FormatUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import retrofit2.Retrofit
@@ -203,6 +204,7 @@ fun DashboardScreen(
     val locationHelper = remember { LocationHelper(context) }
     val viewModel: DashboardViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
+    val useMetric by appPreferences.useMetricDistance.collectAsState(initial = false)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions(),
@@ -288,6 +290,7 @@ fun DashboardScreen(
                                     stopWithDistance = stopWD,
                                     isStarred = true,
                                     appPreferences = appPreferences,
+                                    useMetric = useMetric,
                                     loadPriority = index,
                                     fetchArrivals = { viewModel.getArrivalsForStop(stopWD.stop.id) },
                                     onClick = { onStopClick(stopWD.stop.id) },
@@ -314,6 +317,7 @@ fun DashboardScreen(
                                     stopWithDistance = stopWD,
                                     isStarred = false,
                                     appPreferences = appPreferences,
+                                    useMetric = useMetric,
                                     loadPriority = starredCount + index,
                                     fetchArrivals = { viewModel.getArrivalsForStop(stopWD.stop.id) },
                                     onClick = { onStopClick(stopWD.stop.id) },
@@ -344,6 +348,7 @@ fun StopItemRow(
     stopWithDistance: StopWithDistance,
     isStarred: Boolean,
     appPreferences: AppPreferences,
+    useMetric: Boolean,
     loadPriority: Int = 0,
     fetchArrivals: suspend () -> FetchResult,
     onClick: () -> Unit,
@@ -436,7 +441,7 @@ fun StopItemRow(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "~${stopWithDistance.distanceMeters.toInt()}m away",
+                        text = "${FormatUtils.formatDistance(stopWithDistance.distanceMeters, useMetric)} away",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary
                     )

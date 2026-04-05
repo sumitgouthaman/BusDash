@@ -1,4 +1,4 @@
-package com.sumitgouthaman.busdash.data
+package com.sumitgouthaman.busdash.wear.data
 
 import android.annotation.SuppressLint
 import android.content.Context

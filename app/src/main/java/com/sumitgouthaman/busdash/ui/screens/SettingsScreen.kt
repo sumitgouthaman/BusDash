@@ -24,9 +24,11 @@ fun SettingsScreen(
 
     val initialKey by appPreferences.apiKey.collectAsState(initial = null)
     val initialUrl by appPreferences.baseUrl.collectAsState(initial = "https://api.pugetsound.onebusaway.org/api/")
+    val initialMetric by appPreferences.useMetricDistance.collectAsState(initial = false)
 
     var apiKeyInput by remember(initialKey) { mutableStateOf(initialKey ?: "") }
     var baseUrlInput by remember(initialUrl) { mutableStateOf(initialUrl) }
+    var useMetricInput by remember(initialMetric) { mutableStateOf(initialMetric) }
 
     Scaffold(
         topBar = {
@@ -128,13 +130,48 @@ fun SettingsScreen(
                 }
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Appearance settings header
+            Text(
+                text = "APPEARANCE & PREFERENCES",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary,
+                letterSpacing = 1.5.sp
+            )
+
+            // Metric/Imperial toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Use Metric System (m/km)",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Switch(
+                    checked = useMetricInput,
+                    onCheckedChange = { useMetricInput = it },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
+                        uncheckedThumbColor = MaterialTheme.colorScheme.outline,
+                        uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                )
+            }
+
             Spacer(modifier = Modifier.weight(1f))
 
             // Save button
             Button(
                 onClick = {
                     scope.launch {
-                        appPreferences.saveConfig(apiKeyInput, baseUrlInput)
+                        appPreferences.saveConfig(apiKeyInput, baseUrlInput, useMetricInput)
                         onSaveSuccess()
                     }
                 },

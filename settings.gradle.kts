@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "BusDash"
 include(":app")
+include(":wear")
