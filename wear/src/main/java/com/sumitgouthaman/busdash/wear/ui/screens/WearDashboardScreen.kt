@@ -469,37 +469,50 @@ private fun WearArrivalRow(
 ) {
     val first = arrivals.first()
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        // Route badge
-        Box(
-            modifier = Modifier
-                .size(width = 36.dp, height = 22.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(
-                    if (isStarred) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.secondaryContainer
-                ),
-            contentAlignment = Alignment.Center
+    Column(modifier = Modifier.fillMaxWidth()) {
+        // Route badge + destination
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
         ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(
+                        if (isStarred) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.secondaryContainer
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = first.routeShortName,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isStarred) MaterialTheme.colorScheme.onPrimaryContainer
+                           else MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = first.routeShortName,
+                text = first.tripHeadsign,
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = if (isStarred) MaterialTheme.colorScheme.onPrimaryContainer
-                       else MaterialTheme.colorScheme.onSecondaryContainer,
-                maxLines = 1
+                color = TransitOnSurfaceDim,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f)
             )
         }
 
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.height(3.dp))
 
-        // Arrival times
+        // Arrival times row
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.weight(1f)
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(start = 2.dp)
         ) {
             arrivals.forEach { arrival ->
                 val time = if (arrival.predictedDepartureTime > 0)
