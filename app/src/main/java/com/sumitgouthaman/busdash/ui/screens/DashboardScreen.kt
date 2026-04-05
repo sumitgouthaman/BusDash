@@ -1,0 +1,582 @@
+package com.sumitgouthaman.busdash.ui.screens
+
+import android.Manifest
+import android.annotation.SuppressLint
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.LocationHelper
+import com.sumitgouthaman.busdash.data.ObaStop
+import com.sumitgouthaman.busdash.data.ObaArrivalAndDeparture
+import com.sumitgouthaman.busdash.data.OneBusAwayApi
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+
+class DashboardViewModel : ViewModel() {
+    private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
+    val uiState: StateFlow<DashboardUiState> = _uiState
+
+    private var obaApi: OneBusAwayApi? = null
+    private var obaApiKey: String? = null
+
+    // Stops cache
+    private var cachedStops: List<StopWithDistance>? = null
+    private var stopsCacheTime: Long = 0L
+    private val STOPS_CACHE_TTL = 5 * 60 * 1000L // 5 minutes
+
+    // Arrivals cache
+    private val arrivalsCache = mutableMapOf<String, CachedArrivals>()
+    private val ARRIVALS_CACHE_TTL = 60 * 1000L // 60 seconds
+
+    private data class CachedArrivals(
+        val arrivals: List<ObaArrivalAndDeparture>,
+        val timestamp: Long
+    )
+
+    @SuppressLint("MissingPermission")
+    fun loadData(appPreferences: AppPreferences, locationHelper: LocationHelper) {
+        viewModelScope.launch {
+            // If we have fresh cached stops, just reuse them
+            val cached = cachedStops
+            if (cached != null && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
+                // Still re-apply starred filtering with latest starred set
+                val starredFlow = appPreferences.starredStops
+                starredFlow.collectLatest { starredIds ->
+                    val starredStops = cached.filter { it.stop.id in starredIds }
+                    val otherStops = cached.filterNot { it.stop.id in starredIds }
+                    _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds)
+                }
+                return@launch
+            }
+
+            _uiState.value = DashboardUiState.Loading
+            try {
+                val apiKey = appPreferences.apiKey.first()
+                val baseUrl = appPreferences.baseUrl.first()
+
+                if (apiKey.isNullOrBlank()) {
+                    _uiState.value = DashboardUiState.Error("API Key not configured")
+                    return@launch
+                }
+
+                if (obaApi == null) {
+                    obaApi = Retrofit.Builder()
+                        .baseUrl(baseUrl)
+                        .addConverterFactory(GsonConverterFactory.create())
+                        .build()
+                        .create(OneBusAwayApi::class.java)
+                }
+                val api = obaApi!!
+                obaApiKey = apiKey
+
+                val location = locationHelper.getCurrentLocation()
+                if (location == null) {
+                    _uiState.value = DashboardUiState.Error("Could not get location")
+                    return@launch
+                }
+
+                // Fetch stops with backoff on 429
+                var backoff = 1000L
+                var sortedStops: List<StopWithDistance>? = null
+                while (sortedStops == null) {
+                    try {
+                        val response = api.getStopsForLocation(key = apiKey, lat = location.latitude, lon = location.longitude)
+                        if (response.data.limitExceeded) {
+                            kotlinx.coroutines.delay(backoff)
+                            backoff = (backoff * 2).coerceAtMost(60_000L)
+                            continue
+                        }
+                        val rawStops = response.data.list ?: emptyList()
+                        sortedStops = rawStops.map { stop ->
+                            val stopLocation = android.location.Location("").apply {
+                                latitude = stop.lat
+                                longitude = stop.lon
+                            }
+                            StopWithDistance(stop, location.distanceTo(stopLocation))
+                        }.sortedBy { it.distanceMeters }
+                    } catch (e: retrofit2.HttpException) {
+                        if (e.code() == 429) {
+                            kotlinx.coroutines.delay(backoff)
+                            backoff = (backoff * 2).coerceAtMost(60_000L)
+                        } else {
+                            throw e
+                        }
+                    }
+                }
+
+                // Cache the result
+                cachedStops = sortedStops
+                stopsCacheTime = System.currentTimeMillis()
+
+                val starredFlow = appPreferences.starredStops
+                starredFlow.collectLatest { starredIds ->
+                    val starredStops = sortedStops.filter { it.stop.id in starredIds }
+                    val otherStops = sortedStops.filterNot { it.stop.id in starredIds }
+                    _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds)
+                }
+
+            } catch (e: Exception) {
+                _uiState.value = DashboardUiState.Error(e.message ?: "Unknown Error")
+            }
+        }
+    }
+
+    fun toggleStar(appPreferences: AppPreferences, stopId: String) {
+        viewModelScope.launch {
+            appPreferences.toggleStarredStop(stopId)
+        }
+    }
+
+    suspend fun getArrivalsForStop(stopId: String): FetchResult {
+        // Check cache first
+        val cached = arrivalsCache[stopId]
+        if (cached != null && (System.currentTimeMillis() - cached.timestamp) < ARRIVALS_CACHE_TTL) {
+            return FetchResult.Success(cached.arrivals)
+        }
+
+        val api = obaApi ?: return FetchResult.Error
+        val key = obaApiKey ?: return FetchResult.Error
+        return try {
+            val response = api.getArrivalsAndDeparturesForStop(stopId = stopId, key = key)
+            if (response.data.limitExceeded) {
+                // Return cached data if available, otherwise rate limited
+                if (cached != null) FetchResult.Success(cached.arrivals) else FetchResult.RateLimited
+            } else {
+                val arrivals = response.data.entry?.arrivalsAndDepartures ?: emptyList()
+                arrivalsCache[stopId] = CachedArrivals(arrivals, System.currentTimeMillis())
+                FetchResult.Success(arrivals)
+            }
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 429) {
+                if (cached != null) FetchResult.Success(cached.arrivals) else FetchResult.RateLimited
+            } else {
+                FetchResult.Error
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            FetchResult.Error
+        }
+    }
+}
+
+data class StopWithDistance(val stop: ObaStop, val distanceMeters: Float)
+
+sealed class FetchResult {
+    data class Success(val arrivals: List<ObaArrivalAndDeparture>) : FetchResult()
+    object RateLimited : FetchResult()
+    object Error : FetchResult()
+}
+
+sealed class DashboardUiState {
+    object Loading : DashboardUiState()
+    data class Success(val starredStops: List<StopWithDistance>, val otherStops: List<StopWithDistance>, val starredIds: Set<String>) : DashboardUiState()
+    data class Error(val message: String) : DashboardUiState()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DashboardScreen(
+    onStopClick: (String) -> Unit,
+    onSettingsClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val appPreferences = remember { AppPreferences(context) }
+    val locationHelper = remember { LocationHelper(context) }
+    val viewModel: DashboardViewModel = viewModel()
+    val uiState by viewModel.uiState.collectAsState()
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { permissions ->
+            val granted = permissions.entries.all { it.value }
+            if (granted) {
+                viewModel.loadData(appPreferences, locationHelper)
+            }
+        }
+    )
+
+    LaunchedEffect(Unit) {
+        permissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        "BusDash",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.primary
+                ),
+                actions = {
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(
+                            imageVector = Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            when (val state = uiState) {
+                is DashboardUiState.Loading -> {
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                }
+                is DashboardUiState.Error -> {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = state.message,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Button(onClick = { viewModel.loadData(appPreferences, locationHelper) }) {
+                            Text("Retry")
+                        }
+                    }
+                }
+                is DashboardUiState.Success -> {
+                    var visibleOtherCount by remember { mutableIntStateOf(6) }
+                    LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        if (state.starredStops.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "★ Starred Stops Nearby",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                                )
+                            }
+                            items(state.starredStops.size) { index ->
+                                val stopWD = state.starredStops[index]
+                                StopItemRow(
+                                    stopWithDistance = stopWD,
+                                    isStarred = true,
+                                    appPreferences = appPreferences,
+                                    loadPriority = index,
+                                    fetchArrivals = { viewModel.getArrivalsForStop(stopWD.stop.id) },
+                                    onClick = { onStopClick(stopWD.stop.id) },
+                                    onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
+                                )
+                            }
+                        }
+                        
+                        if (state.otherStops.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Nearby Stops",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+                                )
+                            }
+                            
+                            val visibleOtherStops = state.otherStops.take(visibleOtherCount)
+                            val starredCount = state.starredStops.size
+                            items(visibleOtherStops.size) { index ->
+                                val stopWD = visibleOtherStops[index]
+                                StopItemRow(
+                                    stopWithDistance = stopWD,
+                                    isStarred = false,
+                                    appPreferences = appPreferences,
+                                    loadPriority = starredCount + index,
+                                    fetchArrivals = { viewModel.getArrivalsForStop(stopWD.stop.id) },
+                                    onClick = { onStopClick(stopWD.stop.id) },
+                                    onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
+                                )
+                            }
+                            
+                            if (visibleOtherCount < state.otherStops.size) {
+                                item {
+                                    TextButton(
+                                        onClick = { visibleOtherCount += 6 },
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp)
+                                    ) {
+                                        Text("Load More Nearby Stops...")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StopItemRow(
+    stopWithDistance: StopWithDistance,
+    isStarred: Boolean,
+    appPreferences: AppPreferences,
+    loadPriority: Int = 0,
+    fetchArrivals: suspend () -> FetchResult,
+    onClick: () -> Unit,
+    onStarClick: () -> Unit
+) {
+    val starredRoutes by appPreferences.starredRoutes.collectAsState(initial = emptySet())
+
+    var refreshTrigger by remember { mutableIntStateOf(0) }
+    var isLoading by remember { mutableStateOf(true) }
+    var arrivalsState by remember { mutableStateOf<List<ObaArrivalAndDeparture>?>(null) }
+
+    LaunchedEffect(Unit) {
+        // Stagger initial load: closer stops load first
+        kotlinx.coroutines.delay(loadPriority * 300L)
+        refreshTrigger++ // force initial fetch after delay
+        while (true) {
+            kotlinx.coroutines.delay(60_000L)
+            refreshTrigger++
+        }
+    }
+
+    LaunchedEffect(refreshTrigger) {
+        isLoading = true
+        var backoff = 1000L
+        while (true) {
+            when (val result = fetchArrivals()) {
+                is FetchResult.Success -> {
+                    arrivalsState = result.arrivals
+                    isLoading = false
+                    break
+                }
+                is FetchResult.RateLimited -> {
+                    kotlinx.coroutines.delay(backoff)
+                    backoff = (backoff * 2).coerceAtMost(60_000L)
+                }
+                is FetchResult.Error -> {
+                    if (arrivalsState == null) arrivalsState = emptyList()
+                    isLoading = false
+                    break
+                }
+            }
+        }
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            // Header row: stop name + actions
+            Row(
+                verticalAlignment = Alignment.Top,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    // Direction as a prominent label
+                    val direction = stopWithDistance.stop.direction
+                    val directionFull = when (direction?.uppercase()) {
+                        "N" -> "Northbound"
+                        "S" -> "Southbound"
+                        "E" -> "Eastbound"
+                        "W" -> "Westbound"
+                        "NE" -> "Northeast"
+                        "NW" -> "Northwest"
+                        "SE" -> "Southeast"
+                        "SW" -> "Southwest"
+                        else -> direction
+                    }
+                    if (!directionFull.isNullOrBlank()) {
+                        Text(
+                            text = directionFull.uppercase(),
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary,
+                            letterSpacing = 1.5.sp
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                    }
+                    Text(
+                        text = stopWithDistance.stop.name,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        maxLines = 2
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "~${stopWithDistance.distanceMeters.toInt()}m away",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(4.dp).size(20.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    IconButton(onClick = { refreshTrigger++ }, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Refresh",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(onClick = onStarClick, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Filled.Star,
+                        contentDescription = "Star",
+                        modifier = Modifier.size(22.dp),
+                        tint = if (isStarred) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Arrivals section
+            val arrivalsList = arrivalsState
+            if (isLoading && arrivalsList == null) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                }
+            } else if (arrivalsList?.isEmpty() == true) {
+                Text(
+                    text = "No upcoming arrivals",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+            } else {
+                val nonNullArrivals = arrivalsList!!
+                val groupedArrivals = remember(nonNullArrivals, starredRoutes) {
+                    nonNullArrivals.groupBy { it.routeId }
+                        .map { (routeId, groupArrivals) ->
+                            val sortedGroup = groupArrivals.sortedBy {
+                                if (it.predictedDepartureTime > 0) it.predictedDepartureTime else it.scheduledDepartureTime
+                            }
+                            val starred = starredRoutes.contains("${stopWithDistance.stop.id}_${routeId}")
+                            Triple(sortedGroup.first(), sortedGroup.take(3), starred)
+                        }
+                        .sortedWith(
+                            compareByDescending<Triple<ObaArrivalAndDeparture, List<ObaArrivalAndDeparture>, Boolean>> { it.third }
+                                .thenBy {
+                                    val first = it.first
+                                    if (first.predictedDepartureTime > 0) first.predictedDepartureTime else first.scheduledDepartureTime
+                                }
+                        )
+                        .take(4)
+                }
+
+                val timeFormat = remember { java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()) }
+
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    groupedArrivals.forEach { (firstArrival, arrivals, routeStarred) ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            // Route badge
+                            Surface(
+                                shape = MaterialTheme.shapes.medium,
+                                color = if (routeStarred) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.widthIn(min = 56.dp)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        text = firstArrival.routeShortName,
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        color = if (routeStarred) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            // Arrival time blocks
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                arrivals.forEach { arrival ->
+                                    val time = if (arrival.predictedDepartureTime > 0) arrival.predictedDepartureTime else arrival.scheduledDepartureTime
+                                    val minutes = ((time - System.currentTimeMillis()) / 60000).coerceAtLeast(0)
+                                    val exactTime = timeFormat.format(java.util.Date(time))
+
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = "${minutes} min",
+                                            fontSize = 22.sp,
+                                            fontWeight = if (minutes <= 5) androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.Bold,
+                                            color = if (minutes <= 5) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = exactTime,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Star indicator for the route
+                            if (routeStarred) {
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

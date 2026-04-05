@@ -1,0 +1,89 @@
+package com.sumitgouthaman.busdash
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.ui.screens.DashboardScreen
+import com.sumitgouthaman.busdash.ui.screens.SettingsScreen
+import com.sumitgouthaman.busdash.ui.screens.StopDetailsScreen
+import com.sumitgouthaman.busdash.ui.theme.BusDashTheme
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            BusDashTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    BusDashApp()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BusDashApp() {
+    val navController = rememberNavController()
+    val context = LocalContext.current
+    val appPreferences = remember { AppPreferences(context) }
+    
+    val isConfigured by appPreferences.isConfigured.collectAsState(initial = null)
+
+    // Wait until we know if it's configured
+    if (isConfigured == null) {
+        return
+    }
+
+    NavHost(
+        navController = navController,
+        startDestination = if (isConfigured == true) "dashboard" else "settings"
+    ) {
+        composable("dashboard") {
+            DashboardScreen(
+                onStopClick = { stopId ->
+                    navController.navigate("stopDetails/$stopId")
+                },
+                onSettingsClick = {
+                    navController.navigate("settings")
+                }
+            )
+        }
+        
+        composable("settings") {
+            SettingsScreen(
+                onSaveSuccess = {
+                    // Navigate back to dashboard and clear backstack
+                    navController.navigate("dashboard") {
+                        popUpTo(0)
+                    }
+                }
+            )
+        }
+        
+        composable("stopDetails/{stopId}") { backStackEntry ->
+            val stopId = backStackEntry.arguments?.getString("stopId") ?: return@composable
+            StopDetailsScreen(
+                stopId = stopId,
+                onBackClick = {
+                    navController.popBackStack()
+                }
+            )
+        }
+    }
+}
