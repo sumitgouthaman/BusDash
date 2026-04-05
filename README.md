@@ -1,0 +1,51 @@
+# BusDash
+
+A fast, glanceable transit dashboard for Android and Wear OS. Built for daily commuters who take the same bus from the same stops every day.
+
+Powered by the [OneBusAway API](https://onebusaway.org/).
+
+## What it does
+
+BusDash shows real-time arrivals for your nearby stops. Star the stops you care about and they float to the top. Open the app, see your bus times, put your phone away. That's it.
+
+Unlike the full OneBusAway app, BusDash is not a trip planner or a transit map. It's a dashboard — optimized for the "when's my bus?" check you do twice a day.
+
+## Demo
+
+<table>
+  <tr>
+    <td><img src="screenshots/screenshot_phone.png" width="260" alt="Phone screenshot"></td>
+    <td><img src="screenshots/recording_phone.gif" width="260" alt="Phone recording"></td>
+    <td align="center">
+      <img src="screenshots/screenshot_watch.png" width="200" alt="Watch screenshot"><br>
+      <img src="screenshots/recording_watch.gif" width="200" alt="Watch recording">
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Phone</td>
+    <td align="center">Phone</td>
+    <td align="center">Wear OS</td>
+  </tr>
+</table>
+
+## Features
+
+- Real-time arrivals from OneBusAway
+- Star stops for quick access
+- Location-aware — shows nearby stops automatically
+- Wear OS companion app syncs starred stops from your phone
+- Dark theme throughout
+- Handles API rate limits gracefully with caching
+
+## Project structure
+
+```
+app/    — Android phone app
+wear/   — Wear OS app
+```
+
+## Building
+
+Standard Android Gradle project. Open in Android Studio, sync, run.
+
+You'll need a OneBusAway API key in your configuration.
