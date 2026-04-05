@@ -49,3 +49,13 @@ wear/   — Wear OS app
 Standard Android Gradle project. Open in Android Studio, sync, run.
 
 You'll need a OneBusAway API key in your configuration.
+
+### Testing Wear OS Performance
+
+When testing the Wear OS app, **always deploy the `release` build variant** to gauge true real-world scrolling performance. Jetpack Compose lists on Wear OS heavily rely on R8 code minification and optimizations which are disabled in debug mode.
+
+To deploy the optimized release build directly from Android Studio:
+1. Open the **Build Variants** tool window (found on the bottom-left edge, or via **View > Tool Windows > Build Variants**).
+2. Locate the row for the `wear` module.
+3. Click the dropdown under **Active Build Variant** and change it from `debug` to `release`.
+4. Click **Run** normally. (The project's `build.gradle.kts` is pre-configured to use the standard debug signing keys for local release builds to make this frictionless).
