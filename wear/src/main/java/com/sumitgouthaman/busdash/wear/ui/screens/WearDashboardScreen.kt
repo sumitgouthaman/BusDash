@@ -359,13 +359,13 @@ private fun WearStopCard(
 
     LaunchedEffect(Unit) {
         refreshTrigger++
-        var ticks = 0
+        var lastTriggerTime = System.currentTimeMillis()
         while (true) {
             delay(1_000L)
             currentTime = System.currentTimeMillis()
-            ticks++
-            if (ticks % 60 == 0) {
+            if (currentTime - lastTriggerTime >= 60_000L) {
                 refreshTrigger++
+                lastTriggerTime = currentTime
             }
         }
     }

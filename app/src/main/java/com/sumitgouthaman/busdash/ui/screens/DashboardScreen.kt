@@ -368,13 +368,13 @@ fun StopItemRow(
         // Stagger initial load: closer stops load first
         kotlinx.coroutines.delay(loadPriority * 300L)
         refreshTrigger++ // force initial fetch after delay
-        var ticks = 0
+        var lastTriggerTime = System.currentTimeMillis()
         while (true) {
             kotlinx.coroutines.delay(1_000L)
             currentTime = System.currentTimeMillis()
-            ticks++
-            if (ticks % 60 == 0) {
+            if (currentTime - lastTriggerTime >= 60_000L) {
                 refreshTrigger++
+                lastTriggerTime = currentTime
             }
         }
     }
