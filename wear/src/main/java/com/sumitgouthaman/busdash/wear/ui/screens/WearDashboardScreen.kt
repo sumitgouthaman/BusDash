@@ -37,6 +37,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.location.Location
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.lifecycle.ViewModel
@@ -97,16 +104,42 @@ class WearDashboardViewModel : ViewModel() {
     private val arrivalsCache = mutableMapOf<String, CachedArrivals>()
     private val ARRIVALS_CACHE_TTL = 60 * 1000L
 
+    // Stops cache
+    private var cachedStops: List<WearStopWithDistance>? = null
+    private var stopsCacheTime: Long = 0L
+    private val STOPS_CACHE_TTL = 2 * 60 * 1000L // 2 minutes
+    private var lastLocation: Location? = null
+
     private data class CachedArrivals(
         val arrivals: List<ObaArrivalAndDeparture>,
         val timestamp: Long
     )
 
+    private var loadDataJob: kotlinx.coroutines.Job? = null
+
     @SuppressLint("MissingPermission")
-    fun loadData(wearPreferences: WearPreferences, locationHelper: LocationHelper) {
-        Log.d(TAG, "loadData called")
-        viewModelScope.launch {
-            _uiState.value = WearDashboardUiState.Loading
+    fun loadData(wearPreferences: WearPreferences, locationHelper: LocationHelper, force: Boolean = false) {
+        Log.d(TAG, "loadData called, force=$force")
+        loadDataJob?.cancel()
+        loadDataJob = viewModelScope.launch {
+            // Check cache
+            val cached = cachedStops
+            if (cached != null) {
+                val starredIds = wearPreferences.starredStops.first()
+                val starredRoutes = wearPreferences.starredRoutes.first()
+                val starredStops = cached.filter { it.stop.id in starredIds }
+                val otherStops = cached.filterNot { it.stop.id in starredIds }.take(3)
+                val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
+                _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
+                if (!force && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
+                    return@launch
+                }
+            } else {
+                if (_uiState.value !is WearDashboardUiState.Success) {
+                    _uiState.value = WearDashboardUiState.Loading
+                }
+            }
+
             try {
                 val apiKey = wearPreferences.apiKey.first()
                 val baseUrl = wearPreferences.baseUrl.first()
@@ -133,10 +166,17 @@ class WearDashboardViewModel : ViewModel() {
                 val location = locationHelper.getCurrentLocation()
                 if (location == null) {
                     Log.e(TAG, "Location is null!")
-                    _uiState.value = WearDashboardUiState.Error("No location")
+                    if (cached == null) _uiState.value = WearDashboardUiState.Error("No location")
                     return@launch
                 }
                 Log.d(TAG, "Location: lat=${location.latitude}, lon=${location.longitude}")
+
+                if (!force && lastLocation != null && location.distanceTo(lastLocation!!) < 50f) {
+                    if (cached != null && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
+                        return@launch
+                    }
+                }
+                lastLocation = location
 
                 // Fetch stops with backoff
                 var backoff = 1000L
@@ -176,15 +216,17 @@ class WearDashboardViewModel : ViewModel() {
 
                 Log.d(TAG, "Total sorted stops: ${sortedStops.size}")
 
-                // Observe starred stops & routes to filter
-                wearPreferences.starredStops.collectLatest { starredIds ->
-                    val starredRoutes = wearPreferences.starredRoutes.first()
-                    val starredStops = sortedStops.filter { it.stop.id in starredIds }
-                    val otherStops = sortedStops.filterNot { it.stop.id in starredIds }.take(3)
-                    val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
-                    Log.d(TAG, "Display: starred=${starredStops.size}, other=${otherStops.size}, showing=${displayStops.size}, starredIds=$starredIds")
-                    _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
-                }
+                cachedStops = sortedStops
+                stopsCacheTime = System.currentTimeMillis()
+
+                // One-shot read — no hanging collector
+                val starredIds = wearPreferences.starredStops.first()
+                val starredRoutes = wearPreferences.starredRoutes.first()
+                val starredStops = sortedStops.filter { it.stop.id in starredIds }
+                val otherStops = sortedStops.filterNot { it.stop.id in starredIds }.take(3)
+                val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
+                Log.d(TAG, "Display: starred=${starredStops.size}, other=${otherStops.size}, showing=${displayStops.size}, starredIds=$starredIds")
+                _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
             } catch (e: Exception) {
                 Log.e(TAG, "loadData failed", e)
                 _uiState.value = WearDashboardUiState.Error(e.message ?: "Error")
@@ -245,13 +287,29 @@ fun WearDashboardScreen() {
         }
     )
 
-    LaunchedEffect(Unit) {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-        )
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                if (hasFine || hasCoarse) {
+                    viewModel.loadData(wearPreferences, locationHelper, force = true)
+                } else {
+                    permissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                    )
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     when (val state = uiState) {

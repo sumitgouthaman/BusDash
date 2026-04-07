@@ -33,6 +33,13 @@ import kotlinx.coroutines.launch
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.location.Location
+
 class DashboardViewModel : ViewModel() {
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val uiState: StateFlow<DashboardUiState> = _uiState
@@ -44,6 +51,8 @@ class DashboardViewModel : ViewModel() {
     private var cachedStops: List<StopWithDistance>? = null
     private var stopsCacheTime: Long = 0L
     private val STOPS_CACHE_TTL = 5 * 60 * 1000L // 5 minutes
+    private var lastLocation: Location? = null
+    private var loadDataJob: kotlinx.coroutines.Job? = null
 
     // Arrivals cache
     private val arrivalsCache = mutableMapOf<String, CachedArrivals>()
@@ -55,22 +64,31 @@ class DashboardViewModel : ViewModel() {
     )
 
     @SuppressLint("MissingPermission")
-    fun loadData(appPreferences: AppPreferences, locationHelper: LocationHelper) {
-        viewModelScope.launch {
-            // If we have fresh cached stops, just reuse them
+    fun loadData(appPreferences: AppPreferences, locationHelper: LocationHelper, force: Boolean = false) {
+        loadDataJob?.cancel()
+        loadDataJob = viewModelScope.launch {
             val cached = cachedStops
-            if (cached != null && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
-                // Still re-apply starred filtering with latest starred set
-                val starredFlow = appPreferences.starredStops
-                starredFlow.collectLatest { starredIds ->
-                    val starredStops = cached.filter { it.stop.id in starredIds }
-                    val otherStops = cached.filterNot { it.stop.id in starredIds }
-                    _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds)
+            if (cached != null) {
+                val starredIds = appPreferences.starredStops.first()
+                val starredStops = cached.filter { it.stop.id in starredIds }
+                val otherStops = cached.filterNot { it.stop.id in starredIds }
+                _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds)
+                
+                if (!force && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
+                    // Only start collection if we're not hitting the API
+                    appPreferences.starredStops.collectLatest { freshStarredIds ->
+                        val fStarredStops = cached.filter { it.stop.id in freshStarredIds }
+                        val fOtherStops = cached.filterNot { it.stop.id in freshStarredIds }
+                        _uiState.value = DashboardUiState.Success(fStarredStops, fOtherStops, freshStarredIds)
+                    }
+                    return@launch
                 }
-                return@launch
+            } else {
+                if (_uiState.value !is DashboardUiState.Success) {
+                    _uiState.value = DashboardUiState.Loading
+                }
             }
 
-            _uiState.value = DashboardUiState.Loading
             try {
                 val apiKey = appPreferences.apiKey.first()
                 val baseUrl = appPreferences.baseUrl.first()
@@ -92,9 +110,23 @@ class DashboardViewModel : ViewModel() {
 
                 val location = locationHelper.getCurrentLocation()
                 if (location == null) {
-                    _uiState.value = DashboardUiState.Error("Could not get location")
+                    if (cached == null) _uiState.value = DashboardUiState.Error("Could not get location")
                     return@launch
                 }
+                if (!force && lastLocation != null && location.distanceTo(lastLocation!!) < 50f) {
+                    if (cached != null && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
+                        // Re-bind collection
+                        appPreferences.starredStops.collectLatest { sIds ->
+                            _uiState.value = DashboardUiState.Success(
+                                cached.filter { it.stop.id in sIds },
+                                cached.filterNot { it.stop.id in sIds },
+                                sIds
+                            )
+                        }
+                        return@launch
+                    }
+                }
+                lastLocation = location
 
                 // Fetch stops with backoff on 429
                 var backoff = 1000L
@@ -218,13 +250,29 @@ fun DashboardScreen(
         }
     )
 
-    LaunchedEffect(Unit) {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-        )
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                if (hasFine || hasCoarse) {
+                    viewModel.loadData(appPreferences, locationHelper, force = true)
+                } else {
+                    permissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                    )
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     Scaffold(

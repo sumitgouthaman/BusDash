@@ -12,10 +12,21 @@ class LocationHelper(context: Context) {
 
     @SuppressLint("MissingPermission")
     suspend fun getCurrentLocation(): Location? {
-        return try {
+        // First try a fresh high-accuracy location (up to 8s)
+        val fresh = try {
             kotlinx.coroutines.withTimeoutOrNull(8000L) {
                 fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+        if (fresh != null) return fresh
+
+        // Fall back to last known location if getCurrentLocation timed out or returned null
+        // (common right after Activity restart before FusedLocationProvider warms up)
+        return try {
+            fusedLocationClient.lastLocation.await()
         } catch (e: Exception) {
             e.printStackTrace()
             null
