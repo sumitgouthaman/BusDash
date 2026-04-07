@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +53,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.CircularProgressIndicator
@@ -93,6 +96,9 @@ class WearDashboardViewModel : ViewModel() {
     private val _uiState = MutableStateFlow<WearDashboardUiState>(WearDashboardUiState.Loading)
     val uiState: StateFlow<WearDashboardUiState> = _uiState
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing
+
     companion object {
         private const val TAG = "WearDashVM"
     }
@@ -122,25 +128,25 @@ class WearDashboardViewModel : ViewModel() {
         Log.d(TAG, "loadData called, force=$force")
         loadDataJob?.cancel()
         loadDataJob = viewModelScope.launch {
-            // Check cache
+            _isRefreshing.value = true
             val cached = cachedStops
-            if (cached != null) {
-                val starredIds = wearPreferences.starredStops.first()
-                val starredRoutes = wearPreferences.starredRoutes.first()
-                val starredStops = cached.filter { it.stop.id in starredIds }
-                val otherStops = cached.filterNot { it.stop.id in starredIds }.take(3)
-                val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
-                _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
-                if (!force && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
-                    return@launch
-                }
-            } else {
-                if (_uiState.value !is WearDashboardUiState.Success) {
-                    _uiState.value = WearDashboardUiState.Loading
-                }
-            }
-
             try {
+                if (cached != null) {
+                    val starredIds = wearPreferences.starredStops.first()
+                    val starredRoutes = wearPreferences.starredRoutes.first()
+                    val starredStops = cached.filter { it.stop.id in starredIds }
+                    val otherStops = cached.filterNot { it.stop.id in starredIds }.take(3)
+                    val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
+                    _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
+                    if (!force && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
+                        return@launch
+                    }
+                } else {
+                    if (_uiState.value !is WearDashboardUiState.Success) {
+                        _uiState.value = WearDashboardUiState.Loading
+                    }
+                }
+
                 val apiKey = wearPreferences.apiKey.first()
                 val baseUrl = wearPreferences.baseUrl.first()
                 Log.d(TAG, "Config: apiKey=${if (apiKey.isNullOrBlank()) "EMPTY" else "set(${apiKey.length} chars)"}, baseUrl=$baseUrl")
@@ -230,9 +236,12 @@ class WearDashboardViewModel : ViewModel() {
             } catch (e: Exception) {
                 Log.e(TAG, "loadData failed", e)
                 _uiState.value = WearDashboardUiState.Error(e.message ?: "Error")
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }
+
 
     fun getCachedArrivals(stopId: String): Pair<List<ObaArrivalAndDeparture>, Long>? {
         val cached = arrivalsCache[stopId]
@@ -340,7 +349,9 @@ fun WearDashboardScreen() {
                 starredIds = state.starredIds,
                 starredRoutes = state.starredRoutes,
                 useMetric = useMetric,
-                viewModel = viewModel
+                viewModel = viewModel,
+                wearPreferences = wearPreferences,
+                locationHelper = locationHelper
             )
         }
     }
@@ -352,22 +363,44 @@ private fun WearDashboardContent(
     starredIds: Set<String>,
     starredRoutes: Set<String>,
     useMetric: Boolean,
-    viewModel: WearDashboardViewModel
+    viewModel: WearDashboardViewModel,
+    wearPreferences: WearPreferences,
+    locationHelper: LocationHelper
 ) {
     val listState = rememberScalingLazyListState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val haptic = LocalHapticFeedback.current
+    val isStarredMode = stops.any { it.stop.id in starredIds }
 
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize()
     ) {
-        // Title
+        // Title row: star/circle swaps to spinner while refreshing
         item {
-            Text(
-                text = if (stops.any { it.stop.id in starredIds }) "★ Starred" else "Nearby",
-                style = MaterialTheme.typography.titleLarge,
-                color = if (stops.any { it.stop.id in starredIds }) TransitAmber else MaterialTheme.colorScheme.primary,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(bottom = 4.dp)
-            )
+            ) {
+                if (isRefreshing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(
+                        text = if (isStarredMode) "★" else "◎",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = if (isStarredMode) TransitAmber else MaterialTheme.colorScheme.primary
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isStarredMode) "Starred" else "Nearby",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = if (isStarredMode) TransitAmber else MaterialTheme.colorScheme.primary
+                )
+            }
         }
 
         if (stops.isEmpty()) {
@@ -394,8 +427,45 @@ private fun WearDashboardContent(
                 )
             }
         }
+
+        // Refresh button at the bottom — centered, Wear-native sizing
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Button(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.loadData(wearPreferences, locationHelper, force = true)
+                    },
+                    enabled = !isRefreshing
+                ) {
+                    if (isRefreshing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Refresh",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isRefreshing) "Refreshing" else "Refresh",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+        }
     }
 }
+
 
 @Composable
 private fun WearStopCard(
