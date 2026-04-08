@@ -10,6 +10,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +46,11 @@ class DashboardViewModel : ViewModel() {
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val uiState: StateFlow<DashboardUiState> = _uiState
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing
+
+    private var globalRefreshTrigger = 0
+
     private var obaApi: OneBusAwayApi? = null
     private var obaApiKey: String? = null
 
@@ -67,19 +74,25 @@ class DashboardViewModel : ViewModel() {
     fun loadData(appPreferences: AppPreferences, locationHelper: LocationHelper, force: Boolean = false) {
         loadDataJob?.cancel()
         loadDataJob = viewModelScope.launch {
+            _isRefreshing.value = true
+            if (force) {
+                globalRefreshTrigger++
+                arrivalsCache.clear()
+            }
             val cached = cachedStops
             if (cached != null) {
                 val starredIds = appPreferences.starredStops.first()
                 val starredStops = cached.filter { it.stop.id in starredIds }
                 val otherStops = cached.filterNot { it.stop.id in starredIds }
-                _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds)
+                _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds, globalRefreshTrigger)
                 
                 if (!force && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
                     // Only start collection if we're not hitting the API
+                    _isRefreshing.value = false
                     appPreferences.starredStops.collectLatest { freshStarredIds ->
                         val fStarredStops = cached.filter { it.stop.id in freshStarredIds }
                         val fOtherStops = cached.filterNot { it.stop.id in freshStarredIds }
-                        _uiState.value = DashboardUiState.Success(fStarredStops, fOtherStops, freshStarredIds)
+                        _uiState.value = DashboardUiState.Success(fStarredStops, fOtherStops, freshStarredIds, globalRefreshTrigger)
                     }
                     return@launch
                 }
@@ -116,11 +129,13 @@ class DashboardViewModel : ViewModel() {
                 if (!force && lastLocation != null && location.distanceTo(lastLocation!!) < 50f) {
                     if (cached != null && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
                         // Re-bind collection
+                        _isRefreshing.value = false
                         appPreferences.starredStops.collectLatest { sIds ->
                             _uiState.value = DashboardUiState.Success(
                                 cached.filter { it.stop.id in sIds },
                                 cached.filterNot { it.stop.id in sIds },
-                                sIds
+                                sIds,
+                                globalRefreshTrigger
                             )
                         }
                         return@launch
@@ -161,15 +176,18 @@ class DashboardViewModel : ViewModel() {
                 cachedStops = sortedStops
                 stopsCacheTime = System.currentTimeMillis()
 
+                _isRefreshing.value = false
                 val starredFlow = appPreferences.starredStops
                 starredFlow.collectLatest { starredIds ->
                     val starredStops = sortedStops.filter { it.stop.id in starredIds }
                     val otherStops = sortedStops.filterNot { it.stop.id in starredIds }
-                    _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds)
+                    _uiState.value = DashboardUiState.Success(starredStops, otherStops, starredIds, globalRefreshTrigger)
                 }
 
             } catch (e: Exception) {
                 _uiState.value = DashboardUiState.Error(e.message ?: "Unknown Error")
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }
@@ -223,7 +241,12 @@ sealed class FetchResult {
 
 sealed class DashboardUiState {
     object Loading : DashboardUiState()
-    data class Success(val starredStops: List<StopWithDistance>, val otherStops: List<StopWithDistance>, val starredIds: Set<String>) : DashboardUiState()
+    data class Success(
+        val starredStops: List<StopWithDistance>,
+        val otherStops: List<StopWithDistance>,
+        val starredIds: Set<String>,
+        val refreshTrigger: Int = 0
+    ) : DashboardUiState()
     data class Error(val message: String) : DashboardUiState()
 }
 
@@ -238,6 +261,7 @@ fun DashboardScreen(
     val locationHelper = remember { LocationHelper(context) }
     val viewModel: DashboardViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val useMetric by appPreferences.useMetricDistance.collectAsState(initial = false)
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -302,7 +326,13 @@ fun DashboardScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+        val pullToRefreshState = rememberPullToRefreshState()
+        PullToRefreshBox(
+            isRefreshing = isRefreshing && uiState !is DashboardUiState.Loading,
+            onRefresh = { viewModel.loadData(appPreferences, locationHelper, force = true) },
+            state = pullToRefreshState,
+            modifier = Modifier.padding(padding).fillMaxSize()
+        ) {
             when (val state = uiState) {
                 is DashboardUiState.Loading -> {
                     CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -327,14 +357,27 @@ fun DashboardScreen(
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         if (state.starredStops.isNotEmpty()) {
                             item {
-                                Text(
-                                    text = "★ Starred Stops Nearby",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.tertiary,
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                                )
+                                ) {
+                                    Text(
+                                        text = "★",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Starred Stops Nearby",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                }
                             }
-                            items(state.starredStops.size) { index ->
+                            items(
+                                count = state.starredStops.size,
+                                key = { state.starredStops[it].stop.id }
+                            ) { index ->
                                 val stopWD = state.starredStops[index]
                                 StopItemRow(
                                     stopWithDistance = stopWD,
@@ -342,6 +385,7 @@ fun DashboardScreen(
                                     appPreferences = appPreferences,
                                     useMetric = useMetric,
                                     loadPriority = index,
+                                    externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
                                     onClick = { onStopClick(stopWD.stop.id) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
@@ -351,17 +395,32 @@ fun DashboardScreen(
                         
                         if (state.otherStops.isNotEmpty()) {
                             item {
-                                Text(
-                                    text = "Nearby Stops",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
-                                )
+                                ) {
+                                    if (state.starredStops.isEmpty()) {
+                                        Text(
+                                            text = "◎",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                    }
+                                    Text(
+                                        text = "Nearby Stops",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                             
                             val visibleOtherStops = state.otherStops.take(visibleOtherCount)
                             val starredCount = state.starredStops.size
-                            items(visibleOtherStops.size) { index ->
+                            items(
+                                count = visibleOtherStops.size,
+                                key = { visibleOtherStops[it].stop.id }
+                            ) { index ->
                                 val stopWD = visibleOtherStops[index]
                                 StopItemRow(
                                     stopWithDistance = stopWD,
@@ -369,6 +428,7 @@ fun DashboardScreen(
                                     appPreferences = appPreferences,
                                     useMetric = useMetric,
                                     loadPriority = starredCount + index,
+                                    externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
                                     onClick = { onStopClick(stopWD.stop.id) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
@@ -400,6 +460,7 @@ fun StopItemRow(
     appPreferences: AppPreferences,
     useMetric: Boolean,
     loadPriority: Int = 0,
+    externalRefreshTrigger: Int = 0,
     fetchArrivals: suspend (force: Boolean) -> FetchResult,
     onClick: () -> Unit,
     onStarClick: () -> Unit
@@ -427,10 +488,10 @@ fun StopItemRow(
         }
     }
 
-    LaunchedEffect(refreshTrigger) {
+    LaunchedEffect(refreshTrigger, externalRefreshTrigger) {
         isLoading = true
         var backoff = 1000L
-        val isForced = refreshTrigger > 1
+        val isForced = refreshTrigger > 1 || externalRefreshTrigger > 0
         while (true) {
             when (val result = fetchArrivals(isForced)) {
                 is FetchResult.Success -> {
