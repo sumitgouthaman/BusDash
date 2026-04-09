@@ -43,7 +43,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -86,7 +86,8 @@ data class WearStopWithDistance(val stop: ObaStop, val distanceMeters: Float)
 sealed class WearDashboardUiState {
     object Loading : WearDashboardUiState()
     data class Success(
-        val stops: List<WearStopWithDistance>,
+        val starredStops: List<WearStopWithDistance>,
+        val otherStops: List<WearStopWithDistance>,
         val starredIds: Set<String>,
         val starredRoutes: Set<String>
     ) : WearDashboardUiState()
@@ -137,8 +138,7 @@ class WearDashboardViewModel : ViewModel() {
                     val starredRoutes = wearPreferences.starredRoutes.first()
                     val starredStops = cached.filter { it.stop.id in starredIds }
                     val otherStops = cached.filterNot { it.stop.id in starredIds }.take(3)
-                    val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
-                    _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
+                    _uiState.value = WearDashboardUiState.Success(starredStops, otherStops, starredIds, starredRoutes)
                     if (!force && (System.currentTimeMillis() - stopsCacheTime) < STOPS_CACHE_TTL) {
                         return@launch
                     }
@@ -231,9 +231,8 @@ class WearDashboardViewModel : ViewModel() {
                 val starredRoutes = wearPreferences.starredRoutes.first()
                 val starredStops = sortedStops.filter { it.stop.id in starredIds }
                 val otherStops = sortedStops.filterNot { it.stop.id in starredIds }.take(3)
-                val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
-                Log.d(TAG, "Display: starred=${starredStops.size}, other=${otherStops.size}, showing=${displayStops.size}, starredIds=$starredIds")
-                _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
+                Log.d(TAG, "Display: starred=${starredStops.size}, other=${otherStops.size}, starredIds=$starredIds")
+                _uiState.value = WearDashboardUiState.Success(starredStops, otherStops, starredIds, starredRoutes)
             } catch (e: CancellationException) {
                 throw e  // Never swallow cancellation — it breaks structured concurrency
             } catch (e: Exception) {
@@ -348,7 +347,8 @@ fun WearDashboardScreen() {
         }
         is WearDashboardUiState.Success -> {
             WearDashboardContent(
-                stops = state.stops,
+                starredStops = state.starredStops,
+                otherStops = state.otherStops,
                 starredIds = state.starredIds,
                 starredRoutes = state.starredRoutes,
                 useMetric = useMetric,
@@ -362,7 +362,8 @@ fun WearDashboardScreen() {
 
 @Composable
 private fun WearDashboardContent(
-    stops: List<WearStopWithDistance>,
+    starredStops: List<WearStopWithDistance>,
+    otherStops: List<WearStopWithDistance>,
     starredIds: Set<String>,
     starredRoutes: Set<String>,
     useMetric: Boolean,
@@ -373,40 +374,30 @@ private fun WearDashboardContent(
     val listState = rememberScalingLazyListState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
     val haptic = LocalHapticFeedback.current
-    val isStarredMode = stops.any { it.stop.id in starredIds }
 
     ScalingLazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize()
     ) {
-        // Title row: star/circle swaps to spinner while refreshing
-        item {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 4.dp)
-            ) {
-                if (isRefreshing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
+        // Only show a header row while refreshing; sections provide labels otherwise
+        if (isRefreshing) {
+            item {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isStarredMode) "★" else "◎",
+                        text = "Refreshing",
                         style = MaterialTheme.typography.titleLarge,
-                        color = if (isStarredMode) TransitAmber else MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (isStarredMode) "Starred" else "Nearby",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = if (isStarredMode) TransitAmber else MaterialTheme.colorScheme.primary
-                )
             }
         }
 
-        if (stops.isEmpty()) {
+        if (starredStops.isEmpty() && otherStops.isEmpty()) {
             item {
                 Text(
                     text = "No stops found",
@@ -416,14 +407,23 @@ private fun WearDashboardContent(
                     modifier = Modifier.fillMaxWidth().padding(16.dp)
                 )
             }
-        } else {
-            items(
-                items = stops,
-                key = { it.stop.id }
-            ) { stopWD ->
+        }
+
+        if (starredStops.isNotEmpty()) {
+            item {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                ) {
+                    Text(text = "★", style = MaterialTheme.typography.titleLarge, color = TransitAmber)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Starred", style = MaterialTheme.typography.titleLarge, color = TransitAmber)
+                }
+            }
+            items(items = starredStops, key = { it.stop.id }) { stopWD ->
                 WearStopCard(
                     stopWithDistance = stopWD,
-                    isStarred = stopWD.stop.id in starredIds,
+                    isStarred = true,
                     starredRoutes = starredRoutes,
                     useMetric = useMetric,
                     viewModel = viewModel
@@ -431,7 +431,29 @@ private fun WearDashboardContent(
             }
         }
 
-        // Refresh button at the bottom — centered, Wear-native sizing
+        if (otherStops.isNotEmpty()) {
+            item {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 4.dp, top = if (starredStops.isNotEmpty()) 8.dp else 0.dp)
+                ) {
+                    Text(text = "◎", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Nearby", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            items(items = otherStops, key = { it.stop.id }) { stopWD ->
+                WearStopCard(
+                    stopWithDistance = stopWD,
+                    isStarred = false,
+                    starredRoutes = starredRoutes,
+                    useMetric = useMetric,
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Refresh button at the bottom
         item {
             Box(
                 modifier = Modifier
@@ -447,10 +469,7 @@ private fun WearDashboardContent(
                     enabled = !isRefreshing
                 ) {
                     if (isRefreshing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                     } else {
                         Icon(
                             imageVector = Icons.Filled.Refresh,

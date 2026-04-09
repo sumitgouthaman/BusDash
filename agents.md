@@ -82,10 +82,12 @@ The Wear app fetches transit data **directly from the OBA API** — it does not 
 
 ### Watch Display Logic
 
-`WearDashboardViewModel.loadData()` applies the following priority:
+`WearDashboardViewModel.loadData()` builds the display list as follows:
 
-1. If starred stops exist in the nearby results → show all starred stops.
-2. Otherwise → show the 3 geographically nearest stops.
+1. Starred stops (all that appear in nearby results), ordered by distance.
+2. Then up to 3 nearest non-starred stops.
+
+Both groups are always shown — starred stops are never used as an exclusive fallback.
 
 Within each stop card, arrivals are **grouped by route** and sorted so that starred routes appear first, then by soonest departure. Up to 3 route groups are shown per card.
 
