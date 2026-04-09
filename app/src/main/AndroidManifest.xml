@@ -16,6 +16,14 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BusDash">
         
+        <service
+            android:name=".data.PhoneWearableListenerService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.CAPABILITY_CHANGED" />
+            </intent-filter>
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

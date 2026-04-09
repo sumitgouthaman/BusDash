@@ -33,10 +33,12 @@ class WearDataSync(
     /**
      * Starts observing preference changes and syncing to the watch.
      * Should be called once from the phone's activity lifecycle.
+     *
+     * The [combine] flow emits immediately on collection with the current preference values,
+     * so an initial push happens on every app open without needing a separate startup check.
      */
     fun startSync() {
         scope.launch {
-            // Combine all preference flows and push whenever any changes
             combine(
                 appPreferences.apiKey,
                 appPreferences.baseUrl,

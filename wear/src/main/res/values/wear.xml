@@ -1,0 +1,6 @@
+<resources>
+    <!-- Capability advertised by the Wear OS app so the phone can detect it is installed and connected. -->
+    <string-array name="android_wear_capabilities">
+        <item>busdash_wear</item>
+    </string-array>
+</resources>

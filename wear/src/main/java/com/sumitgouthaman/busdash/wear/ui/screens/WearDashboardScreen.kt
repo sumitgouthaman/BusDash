@@ -69,6 +69,7 @@ import com.sumitgouthaman.busdash.wear.data.WearPreferences
 import com.sumitgouthaman.busdash.wear.ui.theme.TransitAmber
 import com.sumitgouthaman.busdash.wear.ui.theme.TransitOnSurfaceDim
 import com.sumitgouthaman.busdash.wear.ui.utils.FormatUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -233,6 +234,8 @@ class WearDashboardViewModel : ViewModel() {
                 val displayStops = if (starredStops.isNotEmpty()) starredStops else otherStops
                 Log.d(TAG, "Display: starred=${starredStops.size}, other=${otherStops.size}, showing=${displayStops.size}, starredIds=$starredIds")
                 _uiState.value = WearDashboardUiState.Success(displayStops, starredIds, starredRoutes)
+            } catch (e: CancellationException) {
+                throw e  // Never swallow cancellation — it breaks structured concurrency
             } catch (e: Exception) {
                 Log.e(TAG, "loadData failed", e)
                 _uiState.value = WearDashboardUiState.Error(e.message ?: "Error")

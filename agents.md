@@ -33,6 +33,7 @@ The project is split into two main modules:
   - `AppPreferences.kt`: Manages user settings and starred stops using DataStore.
   - `LocationHelper.kt`: Encapsulates FusedLocationProviderClient logic.
   - `WearDataSync.kt`: Responsible for pushing configuration and starred stops to the Wear OS device.
+  - `PhoneWearableListenerService.kt`: Phone-side `WearableListenerService` that detects when the watch comes online and proactively pushes config.
 - **`ui/`**: Compose-based UI.
   - `screens/`: `DashboardScreen` (main list), `SettingsScreen` (configuration), `StopDetailsScreen`.
   - `theme/`: App-specific Material 3 theme.
@@ -46,8 +47,66 @@ The project is split into two main modules:
 
 ## Core Logic & Workflows
 
-### Data Synchronization
-The phone app acts as the primary configuration source. When the API key or starred stops change in `AppPreferences`, `WearDataSync` sends this data via the `DataClient` to the Wear OS device. The watch's `WearConfigReceiver` then updates its local `WearPreferences`.
+### Data Synchronization (Phone → Watch)
+
+The phone pushes config to the watch over the **Wearable Data Layer** at path `/busdash-config`. The sync is one-directional: phone → watch only.
+
+**Trigger**: `WearDataSync.startSync()` is called from a `LaunchedEffect(Unit)` inside the `BusDashApp` composable. It `combine`s all five preference flows — `apiKey`, `baseUrl`, `useMetricDistance`, `starredStops`, `starredRoutes` — and pushes a new `DataItem` to the watch whenever **any** of them changes.
+
+**Payload fields** (`DataMap` keys):
+
+| Key | Type | Notes |
+|---|---|---|
+| `api_key` | String | OBA API key |
+| `base_url` | String | OBA server URL |
+| `use_metric` | Boolean | Distance unit preference |
+| `starred_stops` | StringArray | Set of stop IDs |
+| `starred_routes` | StringArray | Compound keys `"stopId_routeId"` |
+| `timestamp` | Long | Always included to force delivery; the Data Layer deduplicates identical `DataItem`s, so without this a re-push with unchanged data would be silently dropped |
+
+The request is sent with `.setUrgent()` to prioritize delivery over battery savings.
+
+**Watch side — push path**: `WearConfigReceiver` is a `WearableListenerService` registered in the manifest for action `DATA_CHANGED` with path prefix `/busdash-config`. It writes all received values atomically into `WearPreferences` (DataStore) via `updateFromPhone()`. `onDataChanged` only fires when a DataItem *changes after* the listener is registered — a freshly installed watch app will **not** receive DataItems that already existed before it was installed.
+
+**Watch side — pull path**: `WearMainActivity.pullConfigFromDataLayer()` is called in `onCreate` and reads all existing DataItems from the local Data Layer replica using `DataClient.getDataItems()`. This is the most reliable mechanism for fresh installs and restarts: it does not require any push event and works even when the phone is offline, because the Data Layer is a local cache replicated from the phone.
+
+**Scope lifetime**: `WearDataSync` owns a `CoroutineScope(SupervisorJob() + Dispatchers.IO)` that is never cancelled — it runs for the process lifetime. There is no mechanism to stop syncing once `startSync()` is called.
+
+**On-demand push (watch connects while phone app is closed)**: `PhoneWearableListenerService` is a phone-side `WearableListenerService` that listens for `CAPABILITY_CHANGED`. The Wear app advertises the `busdash_wear` capability (declared in `wear/src/main/res/values/wear.xml`). When that capability appears on a connected node, `onCapabilityChanged` fires and the service immediately reads `AppPreferences` and pushes the full config snapshot, without the phone app needing to be open. Note: `onCapabilityChanged` only fires on state *transitions* (capability appears or disappears), not on the current state. To handle the case where the watch is already connected when the phone app opens, `WearDataSync.startSync()` also queries `CapabilityClient.getCapability()` at startup and pushes immediately if the watch is already reachable.
+
+**Data Layer ownership**: The phone owns the single DataItem at `wear://<phoneNodeId>/busdash-config`. Every `putDataItem()` call overwrites the same entry — there is no per-installation or per-pairing accumulation. Uninstalling and reinstalling the watch app does not create additional entries; Play Services cleans up the watch-side replica on uninstall and re-syncs from the phone's single item on reinstall.
+
+### Watch Data Fetching (Independent of Phone)
+
+The Wear app fetches transit data **directly from the OBA API** — it does not relay requests through the phone. The `WearDashboardViewModel` builds its own Retrofit instance using the `baseUrl` it received from `WearPreferences`. This instance is created lazily on first load and cached in the ViewModel. **Important**: if `baseUrl` changes after first load, the cached Retrofit instance is not recreated; the old URL continues to be used until the ViewModel is destroyed.
+
+### Watch Display Logic
+
+`WearDashboardViewModel.loadData()` applies the following priority:
+
+1. If starred stops exist in the nearby results → show all starred stops.
+2. Otherwise → show the 3 geographically nearest stops.
+
+Within each stop card, arrivals are **grouped by route** and sorted so that starred routes appear first, then by soonest departure. Up to 3 route groups are shown per card.
+
+### Caching Strategy (Wear)
+
+| Layer | TTL | Invalidation |
+|---|---|---|
+| Nearby stops | 2 minutes | Force-refresh or user moved >50 m |
+| Arrivals per stop | 60 seconds | Each card's internal 60-second timer, or long-press on card |
+
+On `loadData()`, if a valid stops cache exists and the user hasn't moved far, the cache is shown immediately and a background re-fetch is skipped (unless `force=true`).
+
+Each `WearStopCard` runs an independent 1-second `LaunchedEffect` loop that updates the displayed time-since-fetch label and triggers an arrivals re-fetch every 60 seconds. A long-press on a card bypasses the cache and force-fetches arrivals for that stop only.
+
+### Watch App Standalone Status
+
+The Wear app declares `com.google.android.wearable.standalone = false`, meaning the watch app **requires** the paired phone app to be installed. Without the phone app pushing a config, `WearPreferences.isConfigured` remains `false` and the watch shows `SetupPromptScreen` instead of the dashboard.
+
+### Starred Routes Key Format
+
+Starred routes are stored as compound string keys in the format `"<stopId>_<routeId>"` (e.g., `"1_100223_100"`). This format is used in both `AppPreferences` and `WearPreferences`. When a stop is un-starred, all routes for that stop are automatically removed from `starredRoutes` (see `AppPreferences.toggleStarredStop`).
 
 ### API Key Requirement
 The app requires a OneBusAway API key. During development, this is configured in the `SettingsScreen` on the phone.
@@ -66,3 +125,4 @@ The app requires a OneBusAway API key. During development, this is configured in
 - **Unidirectional Data Flow**: Screens observe state from `ViewModel`s (or directly from `Preferences` flows for simple state) and emit events.
 - **Dependency Injection**: Currently uses simple manual injection/instantiation (e.g., `remember { AppPreferences(context) }` in Compose).
 - **Error Handling**: API errors and rate limits should be handled gracefully by showing cached data or clear error messages.
+- **CancellationException must be rethrown**: In coroutine `catch (e: Exception)` blocks, always add `catch (e: CancellationException) { throw e }` before the general handler. `CancellationException` is a subclass of `Exception`; swallowing it breaks structured concurrency and can surface cancellation as a visible UI error (e.g. "StandaloneCoroutine was cancelled" in an error state).
