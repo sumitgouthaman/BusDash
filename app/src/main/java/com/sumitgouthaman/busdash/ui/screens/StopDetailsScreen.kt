@@ -1,10 +1,13 @@
 package com.sumitgouthaman.busdash.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -83,6 +86,8 @@ sealed class StopDetailsUiState {
 @Composable
 fun StopDetailsScreen(
     stopId: String,
+    lat: Double,
+    lon: Double,
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -109,6 +114,17 @@ fun StopDetailsScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        val uri = Uri.parse("geo:$lat,$lon?q=$lat,$lon")
+                        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    }) {
+                        Icon(
+                            imageVector = Icons.Filled.Map,
+                            contentDescription = "Open in maps"
                         )
                     }
                 },

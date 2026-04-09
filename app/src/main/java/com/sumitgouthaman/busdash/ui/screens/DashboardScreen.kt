@@ -253,7 +253,7 @@ sealed class DashboardUiState {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    onStopClick: (String) -> Unit,
+    onStopClick: (String, Double, Double) -> Unit,
     onSettingsClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -387,12 +387,12 @@ fun DashboardScreen(
                                     loadPriority = index,
                                     externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
-                                    onClick = { onStopClick(stopWD.stop.id) },
+                                    onClick = { onStopClick(stopWD.stop.id, stopWD.stop.lat, stopWD.stop.lon) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
                                 )
                             }
                         }
-                        
+
                         if (state.otherStops.isNotEmpty()) {
                             item {
                                 Row(
@@ -430,11 +430,11 @@ fun DashboardScreen(
                                     loadPriority = starredCount + index,
                                     externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
-                                    onClick = { onStopClick(stopWD.stop.id) },
+                                    onClick = { onStopClick(stopWD.stop.id, stopWD.stop.lat, stopWD.stop.lon) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
                                 )
                             }
-                            
+
                             if (visibleOtherCount < state.otherStops.size) {
                                 item {
                                     TextButton(

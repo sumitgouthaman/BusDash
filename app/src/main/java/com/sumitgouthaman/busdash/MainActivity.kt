@@ -64,8 +64,8 @@ fun BusDashApp() {
     ) {
         composable("dashboard") {
             DashboardScreen(
-                onStopClick = { stopId ->
-                    navController.navigate("stopDetails/$stopId")
+                onStopClick = { stopId, lat, lon ->
+                    navController.navigate("stopDetails/$stopId/$lat/$lon")
                 },
                 onSettingsClick = {
                     navController.navigate("settings")
@@ -84,10 +84,14 @@ fun BusDashApp() {
             )
         }
         
-        composable("stopDetails/{stopId}") { backStackEntry ->
+        composable("stopDetails/{stopId}/{lat}/{lon}") { backStackEntry ->
             val stopId = backStackEntry.arguments?.getString("stopId") ?: return@composable
+            val lat = backStackEntry.arguments?.getString("lat")?.toDoubleOrNull() ?: 0.0
+            val lon = backStackEntry.arguments?.getString("lon")?.toDoubleOrNull() ?: 0.0
             StopDetailsScreen(
                 stopId = stopId,
+                lat = lat,
+                lon = lon,
                 onBackClick = {
                     navController.popBackStack()
                 }
