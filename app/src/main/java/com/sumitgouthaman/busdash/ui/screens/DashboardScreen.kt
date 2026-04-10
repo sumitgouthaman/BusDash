@@ -28,6 +28,7 @@ import com.sumitgouthaman.busdash.data.ObaArrivalAndDeparture
 import com.sumitgouthaman.busdash.data.OneBusAwayApi
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.ui.unit.sp
 import com.sumitgouthaman.busdash.ui.utils.FormatUtils
 import kotlinx.coroutines.flow.*
@@ -37,7 +38,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import android.location.Location
@@ -253,8 +254,9 @@ sealed class DashboardUiState {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    onStopClick: (String, Double, Double) -> Unit,
-    onSettingsClick: () -> Unit
+    onStopClick: (String, String, Double, Double) -> Unit,
+    onSettingsClick: () -> Unit,
+    onCommuteListClick: () -> Unit
 ) {
     val context = LocalContext.current
     val appPreferences = remember { AppPreferences(context) }
@@ -314,6 +316,13 @@ fun DashboardScreen(
                     titleContentColor = MaterialTheme.colorScheme.primary
                 ),
                 actions = {
+                    IconButton(onClick = onCommuteListClick) {
+                        Icon(
+                            imageVector = Icons.Filled.Schedule,
+                            contentDescription = "Typical Commutes",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = onSettingsClick) {
                         Icon(
                             imageVector = Icons.Filled.Settings,
@@ -387,7 +396,7 @@ fun DashboardScreen(
                                     loadPriority = index,
                                     externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
-                                    onClick = { onStopClick(stopWD.stop.id, stopWD.stop.lat, stopWD.stop.lon) },
+                                    onClick = { onStopClick(stopWD.stop.id, stopWD.stop.name, stopWD.stop.lat, stopWD.stop.lon) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
                                 )
                             }
@@ -430,7 +439,7 @@ fun DashboardScreen(
                                     loadPriority = starredCount + index,
                                     externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
-                                    onClick = { onStopClick(stopWD.stop.id, stopWD.stop.lat, stopWD.stop.lon) },
+                                    onClick = { onStopClick(stopWD.stop.id, stopWD.stop.name, stopWD.stop.lat, stopWD.stop.lon) },
                                     onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
                                 )
                             }

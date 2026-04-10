@@ -39,7 +39,7 @@ class WearDataSync(
      */
     fun startSync() {
         scope.launch {
-            combine(
+            val coreFlow = combine(
                 appPreferences.apiKey,
                 appPreferences.baseUrl,
                 appPreferences.useMetricDistance,
@@ -51,8 +51,12 @@ class WearDataSync(
                     baseUrl = baseUrl,
                     useMetricDistance = useMetric,
                     starredStops = starredStops,
-                    starredRoutes = starredRoutes
+                    starredRoutes = starredRoutes,
+                    commutesJson = ""
                 )
+            }
+            combine(coreFlow, appPreferences.typicalCommutes) { core, commutes ->
+                core.copy(commutesJson = commutes.toCommuteJson())
             }.collect { snapshot ->
                 pushToWear(snapshot)
             }
@@ -67,6 +71,7 @@ class WearDataSync(
                 dataMap.putBoolean("use_metric", snapshot.useMetricDistance)
                 dataMap.putStringArray("starred_stops", snapshot.starredStops.toTypedArray())
                 dataMap.putStringArray("starred_routes", snapshot.starredRoutes.toTypedArray())
+                dataMap.putString("commutes_json", snapshot.commutesJson)
                 // Force update even if data hasn't changed by including a timestamp
                 dataMap.putLong("timestamp", System.currentTimeMillis())
             }
@@ -83,6 +88,7 @@ class WearDataSync(
         val baseUrl: String,
         val useMetricDistance: Boolean,
         val starredStops: Set<String>,
-        val starredRoutes: Set<String>
+        val starredRoutes: Set<String>,
+        val commutesJson: String
     )
 }

@@ -277,7 +277,7 @@ class WearDashboardViewModel : ViewModel() {
 // --- Dashboard Screen ---
 
 @Composable
-fun WearDashboardScreen() {
+fun WearDashboardScreen(priorityStopId: String? = null) {
     val context = LocalContext.current
     val wearPreferences = remember { WearPreferences(context) }
     val locationHelper = remember { LocationHelper(context) }
@@ -346,9 +346,18 @@ fun WearDashboardScreen() {
             }
         }
         is WearDashboardUiState.Success -> {
+            // Sort the priority stop to the front if provided
+            val orderedStarred = if (priorityStopId != null)
+                state.starredStops.sortedByDescending { it.stop.id == priorityStopId }
+            else
+                state.starredStops
+            val orderedOther = if (priorityStopId != null && state.starredStops.none { it.stop.id == priorityStopId })
+                state.otherStops.sortedByDescending { it.stop.id == priorityStopId }
+            else
+                state.otherStops
             WearDashboardContent(
-                starredStops = state.starredStops,
-                otherStops = state.otherStops,
+                starredStops = orderedStarred,
+                otherStops = orderedOther,
                 starredIds = state.starredIds,
                 starredRoutes = state.starredRoutes,
                 useMetric = useMetric,

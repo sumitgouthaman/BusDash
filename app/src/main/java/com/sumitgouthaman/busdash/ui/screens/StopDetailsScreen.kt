@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddAlarm
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
@@ -86,9 +87,11 @@ sealed class StopDetailsUiState {
 @Composable
 fun StopDetailsScreen(
     stopId: String,
+    stopName: String = "",
     lat: Double,
     lon: Double,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onAddToCommute: (routeId: String, routeShortName: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     val appPreferences = remember { AppPreferences(context) }
@@ -189,7 +192,8 @@ fun StopDetailsScreen(
                                         headsign = firstArrival.tripHeadsign,
                                         arrivals = arrivals,
                                         isStarred = isStarred,
-                                        onStarClick = { viewModel.toggleRouteStar(appPreferences, state.stopId, routeId) }
+                                        onStarClick = { viewModel.toggleRouteStar(appPreferences, state.stopId, routeId) },
+                                        onAddToCommuteClick = { onAddToCommute(routeId, firstArrival.routeShortName) }
                                     )
                                 }
                             }
@@ -207,7 +211,8 @@ fun RouteGroupCard(
     headsign: String,
     arrivals: List<ObaArrivalAndDeparture>,
     isStarred: Boolean,
-    onStarClick: () -> Unit
+    onStarClick: () -> Unit,
+    onAddToCommuteClick: () -> Unit = {}
 ) {
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
@@ -256,6 +261,15 @@ fun RouteGroupCard(
                 )
 
                 Spacer(modifier = Modifier.width(4.dp))
+
+                IconButton(onClick = onAddToCommuteClick) {
+                    Icon(
+                        imageVector = Icons.Filled.AddAlarm,
+                        contentDescription = "Add to Commute",
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
 
                 IconButton(onClick = onStarClick) {
                     Icon(
@@ -319,7 +333,7 @@ fun RouteGroupCard(
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
                             ) {
                                 Text(
-                                    text = ad.status ?: "",
+                                    text = ad.status,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)

@@ -23,6 +23,7 @@ class WearPreferences(context: Context) {
         val STARRED_STOPS = stringSetPreferencesKey("starred_stops")
         val STARRED_ROUTES = stringSetPreferencesKey("starred_routes")
         val USE_METRIC_DISTANCE = booleanPreferencesKey("use_metric_distance")
+        val COMMUTES_JSON = stringPreferencesKey("commutes_json")
     }
 
     val apiKey: Flow<String?> = dataStore.data.map { preferences ->
@@ -49,12 +50,17 @@ class WearPreferences(context: Context) {
         preferences[USE_METRIC_DISTANCE] ?: false
     }
 
+    val commutesJson: Flow<String> = dataStore.data.map { preferences ->
+        preferences[COMMUTES_JSON] ?: "[]"
+    }
+
     suspend fun updateFromPhone(
         apiKey: String,
         baseUrl: String,
         useMetricDistance: Boolean,
         starredStops: Set<String>,
-        starredRoutes: Set<String>
+        starredRoutes: Set<String>,
+        commutesJson: String = "[]"
     ) {
         dataStore.edit { preferences ->
             preferences[OBA_API_KEY] = apiKey
@@ -62,6 +68,7 @@ class WearPreferences(context: Context) {
             preferences[USE_METRIC_DISTANCE] = useMetricDistance
             preferences[STARRED_STOPS] = starredStops
             preferences[STARRED_ROUTES] = starredRoutes
+            preferences[COMMUTES_JSON] = commutesJson
         }
     }
 }

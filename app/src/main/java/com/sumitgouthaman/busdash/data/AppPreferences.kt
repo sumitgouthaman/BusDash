@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -24,6 +25,7 @@ class AppPreferences(private val context: Context) {
         // Format for starred routes: "stopId_routeId"
         val STARRED_ROUTES = stringSetPreferencesKey("starred_routes")
         val USE_METRIC_DISTANCE = booleanPreferencesKey("use_metric_distance")
+        val TYPICAL_COMMUTES = stringPreferencesKey("typical_commutes")
     }
 
     val apiKey: Flow<String?> = dataStore.data.map { preferences ->
@@ -88,4 +90,34 @@ class AppPreferences(private val context: Context) {
             preferences[STARRED_ROUTES] = newRoutes
         }
     }
+
+    val typicalCommutes: Flow<List<CommuteEntry>> = dataStore.data.map { preferences ->
+        preferences[TYPICAL_COMMUTES]?.toCommuteList() ?: emptyList()
+    }
+
+    suspend fun addCommute(entry: CommuteEntry) {
+        dataStore.edit { preferences ->
+            val current = preferences[TYPICAL_COMMUTES]?.toCommuteList() ?: emptyList()
+            preferences[TYPICAL_COMMUTES] = (current + entry).toCommuteJson()
+        }
+    }
+
+    suspend fun removeCommute(id: String) {
+        dataStore.edit { preferences ->
+            val current = preferences[TYPICAL_COMMUTES]?.toCommuteList() ?: emptyList()
+            preferences[TYPICAL_COMMUTES] = current.filter { it.id != id }.toCommuteJson()
+        }
+    }
+
+    suspend fun toggleCommuteEnabled(id: String) {
+        dataStore.edit { preferences ->
+            val current = preferences[TYPICAL_COMMUTES]?.toCommuteList() ?: emptyList()
+            preferences[TYPICAL_COMMUTES] = current.map { entry ->
+                if (entry.id == id) entry.copy(enabled = !entry.enabled) else entry
+            }.toCommuteJson()
+        }
+    }
+
+    suspend fun getCommuteById(id: String): CommuteEntry? =
+        typicalCommutes.first().find { it.id == id }
 }
