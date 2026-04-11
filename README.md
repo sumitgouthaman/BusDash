@@ -22,6 +22,12 @@ Powered by the [OneBusAway API](https://onebusaway.org/).
   </tr>
 </table>
 
+### Commute Notifications
+
+Set up typical commutes and get a notification with live arrival times right when you need them.
+
+<img src="screenshots/commute_notification.png" width="360" alt="Commute notification showing live arrival times">
+
 ## What it does
 
 BusDash shows real-time arrivals for your nearby stops. Star the stops you care about and they float to the top. Open the app, see your bus times, put your phone away. That's it.
