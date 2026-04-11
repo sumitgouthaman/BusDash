@@ -23,15 +23,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.ObaApiClient
 import com.sumitgouthaman.busdash.data.ObaArrivalAndDeparture
 import com.sumitgouthaman.busdash.data.OneBusAwayApi
+import com.sumitgouthaman.busdash.data.effectiveDepartureTime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -51,11 +51,7 @@ class StopDetailsViewModel : ViewModel() {
                     return@launch
                 }
 
-                val api = Retrofit.Builder()
-                    .baseUrl(baseUrl)
-                    .addConverterFactory(GsonConverterFactory.create())
-                    .build()
-                    .create(OneBusAwayApi::class.java)
+                val api = ObaApiClient.create(baseUrl)
 
                 val response = api.getArrivalsAndDeparturesForStop(stopId = stopId, key = apiKey)
                 val ads = response.data.entry?.arrivalsAndDepartures ?: emptyList()
@@ -172,7 +168,7 @@ fun StopDetailsScreen(
                         // Group by route
                         val grouped = remember(state.ads) {
                             state.ads
-                                .sortedBy { if (it.predictedDepartureTime > 0) it.predictedDepartureTime else it.scheduledDepartureTime }
+                                .sortedBy { it.effectiveDepartureTime() }
                                 .groupBy { it.routeId }
                         }
 
@@ -288,7 +284,7 @@ fun RouteGroupCard(
             // Arrival times list
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 arrivals.forEach { ad ->
-                    val time = if (ad.predictedDepartureTime > 0) ad.predictedDepartureTime else ad.scheduledDepartureTime
+                    val time = ad.effectiveDepartureTime() ?: return@forEach
                     val minutes = ((time - System.currentTimeMillis()) / 60000).coerceAtLeast(0)
                     val exactTime = timeFormat.format(Date(time))
                     val isPredicted = ad.predictedDepartureTime > 0

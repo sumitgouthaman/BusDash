@@ -7,14 +7,12 @@ import androidx.work.WorkerParameters
 import com.google.android.gms.wearable.Wearable
 import com.sumitgouthaman.busdash.data.AppPreferences
 import com.sumitgouthaman.busdash.data.CommuteEntry
-import com.sumitgouthaman.busdash.data.ObaArrivalAndDeparture
-import com.sumitgouthaman.busdash.data.OneBusAwayApi
+import com.sumitgouthaman.busdash.data.ObaApiClient
+import com.sumitgouthaman.busdash.data.effectiveDepartureTime
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -61,16 +59,12 @@ class CommuteNotificationWorker(
         }
 
         val formattedArrivals = try {
-            val api = Retrofit.Builder()
-                .baseUrl(baseUrl)
-                .addConverterFactory(GsonConverterFactory.create())
-                .build()
-                .create(OneBusAwayApi::class.java)
+            val api = ObaApiClient.create(baseUrl)
             val response = api.getArrivalsAndDeparturesForStop(commute.stopId, apiKey)
             val allArrivals = response.data.entry?.arrivalsAndDepartures ?: emptyList()
             allArrivals
                 .filter { it.routeId == commute.routeId }
-                .mapNotNull { departureTimeMs(it) }
+                .mapNotNull { it.effectiveDepartureTime() }
                 .filter { it > System.currentTimeMillis() }
                 .sorted()
                 .take(3)
@@ -84,16 +78,6 @@ class CommuteNotificationWorker(
         NotificationHelper.postCommuteNotification(applicationContext, commute, formattedArrivals)
         sendWatchMessage(commute, formattedArrivals)
         return Result.success()
-    }
-
-    private fun departureTimeMs(ad: ObaArrivalAndDeparture): Long? {
-        val predicted = ad.predictedDepartureTime
-        val scheduled = ad.scheduledDepartureTime
-        return when {
-            predicted > 0 -> predicted
-            scheduled > 0 -> scheduled
-            else -> null
-        }
     }
 
     private fun formatDepartureTime(epochMs: Long): String =

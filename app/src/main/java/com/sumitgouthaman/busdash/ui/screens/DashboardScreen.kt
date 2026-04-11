@@ -23,9 +23,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sumitgouthaman.busdash.data.AppPreferences
 import com.sumitgouthaman.busdash.data.LocationHelper
+import com.sumitgouthaman.busdash.data.ObaApiClient
 import com.sumitgouthaman.busdash.data.ObaStop
 import com.sumitgouthaman.busdash.data.ObaArrivalAndDeparture
 import com.sumitgouthaman.busdash.data.OneBusAwayApi
+import com.sumitgouthaman.busdash.data.effectiveDepartureTime
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Schedule
@@ -33,8 +35,6 @@ import androidx.compose.ui.unit.sp
 import com.sumitgouthaman.busdash.ui.utils.FormatUtils
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -113,11 +113,7 @@ class DashboardViewModel : ViewModel() {
                 }
 
                 if (obaApi == null) {
-                    obaApi = Retrofit.Builder()
-                        .baseUrl(baseUrl)
-                        .addConverterFactory(GsonConverterFactory.create())
-                        .build()
-                        .create(OneBusAwayApi::class.java)
+                    obaApi = ObaApiClient.create(baseUrl)
                 }
                 val api = obaApi!!
                 obaApiKey = apiKey
@@ -626,18 +622,13 @@ fun StopItemRow(
                 val groupedArrivals = remember(nonNullArrivals, starredRoutes) {
                     nonNullArrivals.groupBy { it.routeId }
                         .map { (routeId, groupArrivals) ->
-                            val sortedGroup = groupArrivals.sortedBy {
-                                if (it.predictedDepartureTime > 0) it.predictedDepartureTime else it.scheduledDepartureTime
-                            }
+                            val sortedGroup = groupArrivals.sortedBy { it.effectiveDepartureTime() }
                             val starred = starredRoutes.contains("${stopWithDistance.stop.id}_${routeId}")
                             Triple(sortedGroup.first(), sortedGroup.take(3), starred)
                         }
                         .sortedWith(
                             compareByDescending<Triple<ObaArrivalAndDeparture, List<ObaArrivalAndDeparture>, Boolean>> { it.third }
-                                .thenBy {
-                                    val first = it.first
-                                    if (first.predictedDepartureTime > 0) first.predictedDepartureTime else first.scheduledDepartureTime
-                                }
+                                .thenBy { it.first.effectiveDepartureTime() }
                         )
                         .take(4)
                 }
@@ -695,7 +686,7 @@ fun StopItemRow(
                                 modifier = Modifier.padding(start = 4.dp)
                             ) {
                                 arrivals.forEach { arrival ->
-                                    val time = if (arrival.predictedDepartureTime > 0) arrival.predictedDepartureTime else arrival.scheduledDepartureTime
+                                    val time = arrival.effectiveDepartureTime() ?: return@forEach
                                     val minutes = ((time - System.currentTimeMillis()) / 60000).coerceAtLeast(0)
                                     val exactTime = timeFormat.format(java.util.Date(time))
 

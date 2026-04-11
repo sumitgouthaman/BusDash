@@ -58,6 +58,13 @@ data class ObaArrivalAndDeparture(
     val status: String?
 )
 
+/** Returns the predicted departure time if available, falling back to the scheduled time. */
+fun ObaArrivalAndDeparture.effectiveDepartureTime(): Long? = when {
+    predictedDepartureTime > 0 -> predictedDepartureTime
+    scheduledDepartureTime > 0 -> scheduledDepartureTime
+    else -> null
+}
+
 data class ArrivalsAndDeparturesEntry(
     val stopId: String,
     val arrivalsAndDepartures: List<ObaArrivalAndDeparture>,

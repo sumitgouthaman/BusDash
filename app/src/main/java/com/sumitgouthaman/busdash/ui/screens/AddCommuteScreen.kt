@@ -23,15 +23,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sumitgouthaman.busdash.data.AppPreferences
 import com.sumitgouthaman.busdash.data.CommuteEntry
 import com.sumitgouthaman.busdash.data.LocationHelper
+import com.sumitgouthaman.busdash.data.ObaApiClient
 import com.sumitgouthaman.busdash.data.ObaStop
-import com.sumitgouthaman.busdash.data.OneBusAwayApi
 import com.sumitgouthaman.busdash.notifications.CommuteAlarmScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
 import java.util.Calendar
 import java.util.UUID
 
@@ -136,11 +134,7 @@ class AddCommuteViewModel : ViewModel() {
         }
     }
 
-    private fun buildApi(baseUrl: String) = Retrofit.Builder()
-        .baseUrl(baseUrl)
-        .addConverterFactory(GsonConverterFactory.create())
-        .build()
-        .create(OneBusAwayApi::class.java)
+    private fun buildApi(baseUrl: String) = ObaApiClient.create(baseUrl)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
