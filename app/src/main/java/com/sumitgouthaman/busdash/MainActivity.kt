@@ -137,7 +137,8 @@ fun BusDashApp() {
         composable("commuteList") {
             CommuteListScreen(
                 onBackClick = { navController.popBackStack() },
-                onAddClick = { navController.navigate("addCommute") }
+                onAddClick = { navController.navigate("addCommute") },
+                onEditClick = { commuteId -> navController.navigate("editCommute/$commuteId") }
             )
         }
 
@@ -163,6 +164,19 @@ fun BusDashApp() {
                 prefillStopName = stopName,
                 prefillRouteId = routeId,
                 prefillRouteShortName = routeShortName,
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+
+        composable(
+            route = "editCommute/{commuteId}",
+            arguments = listOf(
+                navArgument("commuteId") { type = NavType.StringType }
+            )
+        ) { backStackEntry ->
+            val commuteId = backStackEntry.arguments?.getString("commuteId") ?: return@composable
+            AddCommuteScreen(
+                editCommuteId = commuteId,
                 onBackClick = { navController.popBackStack() }
             )
         }

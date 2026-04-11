@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -73,7 +75,8 @@ class CommuteListViewModel : ViewModel() {
 @Composable
 fun CommuteListScreen(
     onBackClick: () -> Unit,
-    onAddClick: () -> Unit
+    onAddClick: () -> Unit,
+    onEditClick: (String) -> Unit
 ) {
     val context = LocalContext.current
     val appPreferences = remember { AppPreferences(context) }
@@ -214,7 +217,8 @@ fun CommuteListScreen(
                         CommuteEntryCard(
                             entry = entry,
                             onToggle = { viewModel.toggleEnabled(context, entry) },
-                            onDelete = { viewModel.delete(context, entry) }
+                            onDelete = { viewModel.delete(context, entry) },
+                            onEdit = { onEditClick(entry.id) }
                         )
                     }
                 }
@@ -227,8 +231,10 @@ fun CommuteListScreen(
 private fun CommuteEntryCard(
     entry: CommuteEntry,
     onToggle: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onEdit: () -> Unit
 ) {
+    var showMenu by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     Card(
@@ -245,7 +251,7 @@ private fun CommuteEntryCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Route badge
@@ -289,14 +295,42 @@ private fun CommuteEntryCard(
                 onCheckedChange = { onToggle() }
             )
 
-            Spacer(Modifier.width(8.dp))
-
-            IconButton(onClick = { showDeleteDialog = true }) {
-                Icon(
-                    imageVector = Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.error
-                )
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = "More options"
+                    )
+                }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Edit") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.Edit, contentDescription = null)
+                        },
+                        onClick = {
+                            showMenu = false
+                            onEdit()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            showDeleteDialog = true
+                        }
+                    )
+                }
             }
         }
     }

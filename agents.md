@@ -9,6 +9,7 @@ BusDash is a real-time transit dashboard powered by the [OneBusAway API](https:/
 ### Key Features:
 - **Nearby Arrivals**: Automatically detects nearby stops using location services.
 - **Starred Stops**: Users can star stops for quick access on both phone and watch.
+- **Typical Commutes**: Users configure recurring bus notifications (stop + route + time + days). Alarms fire at the scheduled time, fetch live arrivals, and post a notification. Entries support full CRUD: add, edit (stop/route/time/days), toggle enabled, delete.
 - **Wear OS Companion**: A dedicated Wear OS app that syncs configuration and starred stops from the phone.
 - **Offline-First (Caching)**: Gracefully handles API rate limits and network issues with local caching.
 
@@ -30,12 +31,17 @@ The project is split into two main modules:
 ### 1. `app` (Android Phone)
 - **`data/`**: Core business logic and data handling.
   - `OneBusAwayApi.kt`: Retrofit service interface.
-  - `AppPreferences.kt`: Manages user settings and starred stops using DataStore.
+  - `AppPreferences.kt`: Manages user settings, starred stops, and typical commutes using DataStore. Commutes are stored as a single JSON string (`typical_commutes` key) containing a `List<CommuteEntry>` serialised via Gson. All operations (add, update, remove, toggle) read the full list, mutate, and write the full list back within a `dataStore.edit {}` transaction.
+  - `CommuteEntry.kt`: Data class for a typical commute (id, stopId, stopName, routeId, routeShortName, hour, minute, daysOfWeek, enabled). Includes `formattedTime()` and `formattedDays()` helpers, plus `toCommuteJson()` / `toCommuteList()` Gson extension functions.
   - `LocationHelper.kt`: Encapsulates FusedLocationProviderClient logic.
   - `WearDataSync.kt`: Responsible for pushing configuration and starred stops to the Wear OS device.
   - `PhoneWearableListenerService.kt`: Phone-side `WearableListenerService` that detects when the watch comes online and proactively pushes config.
+- **`notifications/`**: Scheduled bus notification pipeline.
+  - `CommuteAlarmScheduler.kt`: Schedules / cancels `AlarmManager` alarms for each `CommuteEntry`. Uses `entry.id.hashCode()` as the `PendingIntent` request code, so cancel and reschedule always target the same alarm slot.
+  - `CommuteAlarmReceiver.kt`: Broadcast receiver that fires at alarm time; enqueues `CommuteNotificationWorker` and immediately reschedules the next occurrence.
+  - `CommuteNotificationWorker.kt`: `CoroutineWorker` that fetches live arrivals for the commute's stop/route, formats the next 3 departure times, posts a local notification, and sends a Wear OS message.
 - **`ui/`**: Compose-based UI.
-  - `screens/`: `DashboardScreen` (main list), `SettingsScreen` (configuration), `StopDetailsScreen`.
+  - `screens/`: `DashboardScreen` (main list), `SettingsScreen` (configuration), `StopDetailsScreen`, `CommuteListScreen` (list of typical commutes), `AddCommuteScreen` (add **and** edit commutes — controlled by the `editCommuteId` parameter).
   - `theme/`: App-specific Material 3 theme.
 
 ### 2. `wear` (Wear OS)
@@ -46,6 +52,22 @@ The project is split into two main modules:
   - `screens/`: `WearDashboardScreen` (optimized for round displays), `SetupPromptScreen`.
 
 ## Core Logic & Workflows
+
+### Typical Commutes — Scheduling & Notification Pipeline
+
+Each `CommuteEntry` has a stop, route, notification time (hour + minute), and a set of days of week (Calendar constants: 1=Sunday … 7=Saturday). The full lifecycle:
+
+**Scheduling**: `CommuteAlarmScheduler.schedule()` computes the next trigger timestamp by starting from tomorrow at the configured time and advancing day-by-day until landing on an enabled day. It sets an exact alarm (`AlarmManager.setExactAndAllowWhileIdle` if permission granted, otherwise inexact). The request code is `entry.id.hashCode()` — stable across reschedules so that `cancel()` and `schedule()` always operate on the same PendingIntent slot.
+
+**Alarm → notification**: `CommuteAlarmReceiver` fires, enqueues `CommuteNotificationWorker` (requires network), and immediately reschedules the *next* occurrence for the same entry. The worker fetches live arrivals, filters to the configured route and future departures, formats the top 3 times, posts a notification, and sends a Wear OS message.
+
+**Stale guard**: If the alarm fires more than 30 minutes after the scheduled time (e.g. device woke late), the worker skips the notification.
+
+**Edit flow**: When a commute is edited, the old alarm is cancelled (`CommuteAlarmScheduler.cancel(context, original)`) before `AppPreferences.updateCommute()` is called, then a new alarm is scheduled for the updated entry. The `enabled` state is preserved from the original entry via `original.copy(...)`.
+
+**Boot persistence**: `BootReceiver` listens for `BOOT_COMPLETED` and calls `CommuteAlarmScheduler.rescheduleAll()` to restore all enabled commute alarms after a reboot.
+
+**AddCommuteScreen dual mode**: The same screen handles both create and edit. Pass `editCommuteId = ""` (default) for add; pass the existing entry's UUID for edit. In edit mode the screen shows a loading spinner while `AddCommuteViewModel.loadForEdit()` fetches the entry and its stop's routes from the OBA API, then populates all form fields via a `LaunchedEffect(editingEntry?.id)`.
 
 ### Data Synchronization (Phone → Watch)
 

@@ -118,6 +118,15 @@ class AppPreferences(private val context: Context) {
         }
     }
 
+    suspend fun updateCommute(entry: CommuteEntry) {
+        dataStore.edit { preferences ->
+            val current = preferences[TYPICAL_COMMUTES]?.toCommuteList() ?: emptyList()
+            preferences[TYPICAL_COMMUTES] = current.map { existing ->
+                if (existing.id == entry.id) entry else existing
+            }.toCommuteJson()
+        }
+    }
+
     suspend fun getCommuteById(id: String): CommuteEntry? =
         typicalCommutes.first().find { it.id == id }
 }

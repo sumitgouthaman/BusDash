@@ -40,6 +40,7 @@ sealed class AddCommuteUiState {
     object LoadingStops : AddCommuteUiState()
     data class StopsLoaded(val stops: List<StopOption>) : AddCommuteUiState()
     object LoadingRoutes : AddCommuteUiState()
+    object LoadingEntry : AddCommuteUiState()
     object Error : AddCommuteUiState()
     object Saving : AddCommuteUiState()
     object Saved : AddCommuteUiState()
@@ -52,6 +53,9 @@ class AddCommuteViewModel : ViewModel() {
     // Preloaded routes for selected stop (routeId -> routeShortName)
     private val _availableRoutes = MutableStateFlow<List<Pair<String, String>>>(emptyList())
     val availableRoutes: StateFlow<List<Pair<String, String>>> = _availableRoutes
+
+    private val _editingEntry = MutableStateFlow<CommuteEntry?>(null)
+    val editingEntry: StateFlow<CommuteEntry?> = _editingEntry
 
     fun loadNearbyStops(appPreferences: AppPreferences, locationHelper: LocationHelper) {
         viewModelScope.launch {
@@ -134,6 +138,54 @@ class AddCommuteViewModel : ViewModel() {
         }
     }
 
+    fun loadForEdit(appPreferences: AppPreferences, commuteId: String) {
+        viewModelScope.launch {
+            _uiState.value = AddCommuteUiState.LoadingEntry
+            val entry = appPreferences.getCommuteById(commuteId)
+            if (entry == null) {
+                _uiState.value = AddCommuteUiState.Error
+                return@launch
+            }
+            _editingEntry.value = entry
+            loadRoutesForStop(appPreferences, entry.stopId)
+        }
+    }
+
+    fun update(
+        context: Context,
+        appPreferences: AppPreferences,
+        commuteId: String,
+        stopId: String,
+        stopName: String,
+        routeId: String,
+        routeShortName: String,
+        hour: Int,
+        minute: Int,
+        daysOfWeek: Set<Int>,
+        onSaved: () -> Unit
+    ) {
+        viewModelScope.launch {
+            _uiState.value = AddCommuteUiState.Saving
+            val original = appPreferences.getCommuteById(commuteId) ?: run {
+                _uiState.value = AddCommuteUiState.Error; return@launch
+            }
+            CommuteAlarmScheduler.cancel(context, original)
+            val updated = original.copy(
+                stopId = stopId,
+                stopName = stopName,
+                routeId = routeId,
+                routeShortName = routeShortName,
+                hour = hour,
+                minute = minute,
+                daysOfWeek = daysOfWeek
+            )
+            appPreferences.updateCommute(updated)
+            if (updated.enabled) CommuteAlarmScheduler.schedule(context, updated)
+            _uiState.value = AddCommuteUiState.Saved
+            onSaved()
+        }
+    }
+
     private fun buildApi(baseUrl: String) = ObaApiClient.create(baseUrl)
 }
 
@@ -144,6 +196,7 @@ fun AddCommuteScreen(
     prefillStopName: String = "",
     prefillRouteId: String = "",
     prefillRouteShortName: String = "",
+    editCommuteId: String = "",
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -151,8 +204,10 @@ fun AddCommuteScreen(
     val locationHelper = remember { LocationHelper(context) }
     val viewModel: AddCommuteViewModel = viewModel()
 
+    val isEditMode = editCommuteId.isNotBlank()
     val uiState by viewModel.uiState.collectAsState()
     val availableRoutes by viewModel.availableRoutes.collectAsState()
+    val editingEntry by viewModel.editingEntry.collectAsState()
 
     // Form state
     var selectedStopId by remember { mutableStateOf(prefillStopId) }
@@ -171,11 +226,26 @@ fun AddCommuteScreen(
     }
     var showTimePicker by remember { mutableStateOf(false) }
 
-    // Load routes if stop was pre-filled
-    LaunchedEffect(prefillStopId) {
-        if (prefillStopId.isNotBlank() && prefillRouteId.isBlank()) {
-            viewModel.loadRoutesForStop(appPreferences, prefillStopId)
+    // Trigger the appropriate load on screen entry
+    LaunchedEffect(editCommuteId, prefillStopId) {
+        when {
+            editCommuteId.isNotBlank() ->
+                viewModel.loadForEdit(appPreferences, editCommuteId)
+            prefillStopId.isNotBlank() && prefillRouteId.isBlank() ->
+                viewModel.loadRoutesForStop(appPreferences, prefillStopId)
         }
+    }
+
+    // Populate form fields once the existing entry has been loaded (edit mode only)
+    LaunchedEffect(editingEntry?.id) {
+        val entry = editingEntry ?: return@LaunchedEffect
+        selectedStopId = entry.stopId
+        selectedStopName = entry.stopName
+        selectedRouteId = entry.routeId
+        selectedRouteShortName = entry.routeShortName
+        hour = entry.hour
+        minute = entry.minute
+        daysOfWeek = entry.daysOfWeek
     }
 
     val canSave = selectedStopId.isNotBlank() && selectedRouteId.isNotBlank() && daysOfWeek.isNotEmpty()
@@ -185,7 +255,7 @@ fun AddCommuteScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "Add Commute",
+                        if (isEditMode) "Edit Commute" else "Add Commute",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -203,6 +273,18 @@ fun AddCommuteScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
+        if (isEditMode && uiState is AddCommuteUiState.LoadingEntry) {
+            Box(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+            return@Scaffold
+        }
+
         Column(
             modifier = Modifier
                 .padding(padding)
@@ -371,13 +453,24 @@ fun AddCommuteScreen(
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
-                    viewModel.save(
-                        context, appPreferences,
-                        selectedStopId, selectedStopName,
-                        selectedRouteId, selectedRouteShortName,
-                        hour, minute, daysOfWeek,
-                        onSaved = onBackClick
-                    )
+                    if (isEditMode) {
+                        viewModel.update(
+                            context, appPreferences,
+                            editCommuteId,
+                            selectedStopId, selectedStopName,
+                            selectedRouteId, selectedRouteShortName,
+                            hour, minute, daysOfWeek,
+                            onSaved = onBackClick
+                        )
+                    } else {
+                        viewModel.save(
+                            context, appPreferences,
+                            selectedStopId, selectedStopName,
+                            selectedRouteId, selectedRouteShortName,
+                            hour, minute, daysOfWeek,
+                            onSaved = onBackClick
+                        )
+                    }
                 },
                 enabled = canSave && uiState !is AddCommuteUiState.Saving,
                 modifier = Modifier.fillMaxWidth()
@@ -389,7 +482,7 @@ fun AddCommuteScreen(
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 } else {
-                    Text("Save Commute")
+                    Text(if (isEditMode) "Update Commute" else "Save Commute")
                 }
             }
         }
