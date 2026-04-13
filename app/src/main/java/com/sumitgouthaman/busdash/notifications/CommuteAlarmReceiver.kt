@@ -11,17 +11,23 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.DebugLogger
+import com.sumitgouthaman.busdash.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class CommuteAlarmReceiver : BroadcastReceiver() {
 
     companion object {
         const val EXTRA_COMMUTE_ID = "commute_id"
         private const val TAG = "CommuteAlarmReceiver"
+        private val DATE_FORMAT = SimpleDateFormat("EEE, MMM d 'at' h:mm a", Locale.getDefault())
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -29,7 +35,6 @@ class CommuteAlarmReceiver : BroadcastReceiver() {
             Log.w(TAG, "onReceive: missing commute_id extra")
             return
         }
-        Log.d(TAG, "onReceive: commute_id=$commuteId")
 
         enqueueNotificationWork(context, commuteId)
         rescheduleAlarm(context, commuteId)
@@ -49,7 +54,6 @@ class CommuteAlarmReceiver : BroadcastReceiver() {
             .build()
         WorkManager.getInstance(context)
             .enqueueUniqueWork(commuteId, ExistingWorkPolicy.REPLACE, request)
-        Log.d(TAG, "Enqueued CommuteNotificationWorker for $commuteId")
     }
 
     private fun rescheduleAlarm(context: Context, commuteId: String) {
@@ -59,15 +63,33 @@ class CommuteAlarmReceiver : BroadcastReceiver() {
                 val prefs = AppPreferences(context)
                 val commute = prefs.getCommuteById(commuteId)
                 when {
-                    commute == null -> Log.d(TAG, "Commute $commuteId not found, skipping reschedule")
-                    !commute.enabled -> Log.d(TAG, "Commute $commuteId disabled, skipping reschedule")
+                    commute == null -> {
+                        DebugLogger.log(
+                            context, LogLevel.WARN, TAG,
+                            "Alarm fired for a commute that no longer exists — it may have been deleted"
+                        )
+                    }
+                    !commute.enabled -> {
+                        DebugLogger.log(
+                            context, LogLevel.DEBUG, TAG,
+                            "Alarm skipped — Route ${commute.routeShortName} at ${commute.stopName} is disabled"
+                        )
+                    }
                     else -> {
+                        val nextMs = CommuteAlarmScheduler.nextTriggerMs(commute)
                         CommuteAlarmScheduler.schedule(context, commute)
-                        Log.d(TAG, "Rescheduled alarm for $commuteId")
+                        val nextLabel = nextMs?.let { DATE_FORMAT.format(Date(it)) } ?: "unknown"
+                        DebugLogger.log(
+                            context, LogLevel.DEBUG, TAG,
+                            "Next alarm for Route ${commute.routeShortName} at ${commute.stopName} scheduled for $nextLabel"
+                        )
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to reschedule alarm for $commuteId", e)
+                DebugLogger.log(
+                    context, LogLevel.ERROR, TAG,
+                    "Failed to reschedule alarm: ${e.message}"
+                )
             } finally {
                 pendingResult.finish()
             }

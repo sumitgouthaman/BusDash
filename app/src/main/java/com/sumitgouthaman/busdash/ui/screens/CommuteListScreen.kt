@@ -76,7 +76,8 @@ class CommuteListViewModel : ViewModel() {
 fun CommuteListScreen(
     onBackClick: () -> Unit,
     onAddClick: () -> Unit,
-    onEditClick: (String) -> Unit
+    onEditClick: (String) -> Unit,
+    onDebugClick: () -> Unit
 ) {
     val context = LocalContext.current
     val appPreferences = remember { AppPreferences(context) }
@@ -84,6 +85,8 @@ fun CommuteListScreen(
     viewModel.init(appPreferences)
 
     val commutes by viewModel.commutes.collectAsState()
+
+    var showTopMenu by remember { mutableStateOf(false) }
 
     // Re-check exact alarm permission when the screen resumes (e.g. user returns from Settings)
     var hasExactAlarmPermission by remember {
@@ -121,6 +124,28 @@ fun CommuteListScreen(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back"
                         )
+                    }
+                },
+                actions = {
+                    Box {
+                        IconButton(onClick = { showTopMenu = true }) {
+                            Icon(
+                                imageVector = Icons.Filled.MoreVert,
+                                contentDescription = "More options"
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showTopMenu,
+                            onDismissRequest = { showTopMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Debug") },
+                                onClick = {
+                                    showTopMenu = false
+                                    onDebugClick()
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(

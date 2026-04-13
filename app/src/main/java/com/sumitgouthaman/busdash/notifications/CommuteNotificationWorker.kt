@@ -1,12 +1,13 @@
 package com.sumitgouthaman.busdash.notifications
 
 import android.content.Context
-import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.android.gms.wearable.Wearable
 import com.sumitgouthaman.busdash.data.AppPreferences
 import com.sumitgouthaman.busdash.data.CommuteEntry
+import com.sumitgouthaman.busdash.data.DebugLogger
+import com.sumitgouthaman.busdash.data.LogLevel
 import com.sumitgouthaman.busdash.data.ObaApiClient
 import com.sumitgouthaman.busdash.data.effectiveDepartureTime
 import kotlinx.coroutines.flow.first
@@ -33,28 +34,52 @@ class CommuteNotificationWorker(
     }
 
     override suspend fun doWork(): Result {
-        val commuteId = inputData.getString(KEY_COMMUTE_ID) ?: return Result.failure()
+        val commuteId = inputData.getString(KEY_COMMUTE_ID) ?: run {
+            DebugLogger.log(
+                applicationContext, LogLevel.ERROR, TAG,
+                "Internal error: notification work started without a commute identifier"
+            )
+            return Result.failure()
+        }
         val scheduledTimeMs = inputData.getLong(KEY_SCHEDULED_TIME_MS, 0L)
 
-        if (System.currentTimeMillis() - scheduledTimeMs > EXPIRY_MS) {
-            Log.w(TAG, "Skipping stale notification for $commuteId (scheduled ${Date(scheduledTimeMs)})")
+        val prefs = AppPreferences(applicationContext)
+
+        // Fetch commute first so all subsequent log messages can include route/stop context
+        val commute = prefs.getCommuteById(commuteId) ?: run {
+            DebugLogger.log(
+                applicationContext, LogLevel.WARN, TAG,
+                "Could not find the commute to send a notification — it may have been deleted"
+            )
+            return Result.failure()
+        }
+
+        val label = "Route ${commute.routeShortName} at ${commute.stopName}"
+
+        if (!commute.enabled) {
+            DebugLogger.log(
+                applicationContext, LogLevel.DEBUG, TAG,
+                "Notification skipped — $label is disabled"
+            )
             return Result.success()
         }
 
-        val prefs = AppPreferences(applicationContext)
-        val commute = prefs.getCommuteById(commuteId) ?: run {
-            Log.w(TAG, "Commute $commuteId not found")
-            return Result.failure()
-        }
-        if (!commute.enabled) {
-            Log.d(TAG, "Commute $commuteId is disabled, skipping")
+        val ageMin = (System.currentTimeMillis() - scheduledTimeMs) / 60_000
+        if (System.currentTimeMillis() - scheduledTimeMs > EXPIRY_MS) {
+            DebugLogger.log(
+                applicationContext, LogLevel.WARN, TAG,
+                "Notification skipped for $label — the alarm was triggered ${ageMin} min ago, which is too late to be useful"
+            )
             return Result.success()
         }
 
         val apiKey = prefs.apiKey.first()
         val baseUrl = prefs.baseUrl.first()
         if (apiKey.isNullOrBlank()) {
-            Log.w(TAG, "API key is blank, skipping notification")
+            DebugLogger.log(
+                applicationContext, LogLevel.WARN, TAG,
+                "Notification skipped for $label — no API server key is configured in Settings"
+            )
             return Result.failure()
         }
 
@@ -70,12 +95,18 @@ class CommuteNotificationWorker(
                 .take(3)
                 .map { formatDepartureTime(it) }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch arrivals for commute $commuteId", e)
+            DebugLogger.log(
+                applicationContext, LogLevel.ERROR, TAG,
+                "Could not fetch bus times for $label: ${e.message}"
+            )
             return Result.retry()
         }
 
-        Log.d(TAG, "Posting notification with ${formattedArrivals.size} arrivals: $formattedArrivals")
         NotificationHelper.postCommuteNotification(applicationContext, commute, formattedArrivals)
+        DebugLogger.log(
+            applicationContext, LogLevel.DEBUG, TAG,
+            "Notification sent for $label (${formattedArrivals.size} upcoming times)"
+        )
         sendWatchMessage(commute, formattedArrivals)
         return Result.success()
     }
@@ -98,7 +129,7 @@ class CommuteNotificationWorker(
                     .await()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to send watch message", e)
+            // Watch sync failure is non-critical; no debug log entry needed
         }
     }
 }

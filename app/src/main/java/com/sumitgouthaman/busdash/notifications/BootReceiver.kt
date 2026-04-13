@@ -3,8 +3,9 @@ package com.sumitgouthaman.busdash.notifications
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.DebugLogger
+import com.sumitgouthaman.busdash.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,7 +21,11 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 val commutes = AppPreferences(context).typicalCommutes.first()
                 CommuteAlarmScheduler.rescheduleAll(context, commutes)
-                Log.d("BootReceiver", "Rescheduled ${commutes.count { it.enabled }} commute alarms")
+                val count = commutes.count { it.enabled }
+                DebugLogger.log(
+                    context, LogLevel.DEBUG, "BootReceiver",
+                    "Device restarted — rescheduled $count upcoming commute alarm${if (count == 1) "" else "s"}"
+                )
             } finally {
                 pendingResult.finish()
             }

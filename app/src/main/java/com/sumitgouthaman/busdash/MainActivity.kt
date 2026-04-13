@@ -26,6 +26,7 @@ import com.sumitgouthaman.busdash.data.WearDataSync
 import com.sumitgouthaman.busdash.ui.screens.AddCommuteScreen
 import com.sumitgouthaman.busdash.ui.screens.CommuteListScreen
 import com.sumitgouthaman.busdash.ui.screens.DashboardScreen
+import com.sumitgouthaman.busdash.ui.screens.DebugLogScreen
 import com.sumitgouthaman.busdash.ui.screens.SettingsScreen
 import com.sumitgouthaman.busdash.ui.screens.StopDetailsScreen
 import com.sumitgouthaman.busdash.ui.theme.BusDashTheme
@@ -138,7 +139,14 @@ fun BusDashApp() {
             CommuteListScreen(
                 onBackClick = { navController.popBackStack() },
                 onAddClick = { navController.navigate("addCommute") },
-                onEditClick = { commuteId -> navController.navigate("editCommute/$commuteId") }
+                onEditClick = { commuteId -> navController.navigate("editCommute/$commuteId") },
+                onDebugClick = { navController.navigate("debugLog") }
+            )
+        }
+
+        composable("debugLog") {
+            DebugLogScreen(
+                onBackClick = { navController.popBackStack() }
             )
         }
 
