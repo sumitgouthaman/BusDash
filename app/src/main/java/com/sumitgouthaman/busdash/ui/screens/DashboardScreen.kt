@@ -140,15 +140,20 @@ class DashboardViewModel : ViewModel() {
                 }
                 lastLocation = location
 
-                // Fetch stops with backoff on 429
+                // Fetch stops with backoff on 429, capped at 3 attempts to avoid infinite spin
+                val MAX_STOP_RETRIES = 3
+                var stopAttempt = 0
                 var backoff = 1000L
                 var sortedStops: List<StopWithDistance>? = null
-                while (sortedStops == null) {
+                while (sortedStops == null && stopAttempt < MAX_STOP_RETRIES) {
+                    stopAttempt++
                     try {
                         val response = api.getStopsForLocation(key = apiKey, lat = location.latitude, lon = location.longitude)
                         if (response.data.limitExceeded) {
-                            kotlinx.coroutines.delay(backoff)
-                            backoff = (backoff * 2).coerceAtMost(60_000L)
+                            if (stopAttempt < MAX_STOP_RETRIES) {
+                                kotlinx.coroutines.delay(backoff)
+                                backoff = (backoff * 2).coerceAtMost(60_000L)
+                            }
                             continue
                         }
                         val rawStops = response.data.list ?: emptyList()
@@ -160,13 +165,18 @@ class DashboardViewModel : ViewModel() {
                             StopWithDistance(stop, location.distanceTo(stopLocation))
                         }.sortedBy { it.distanceMeters }
                     } catch (e: retrofit2.HttpException) {
-                        if (e.code() == 429) {
+                        if (e.code() == 429 && stopAttempt < MAX_STOP_RETRIES) {
                             kotlinx.coroutines.delay(backoff)
                             backoff = (backoff * 2).coerceAtMost(60_000L)
                         } else {
                             throw e
                         }
                     }
+                }
+                if (sortedStops == null) {
+                    if (cached == null) _uiState.value = DashboardUiState.Error("Could not load stops (server busy, please retry)")
+                    _isRefreshing.value = false
+                    return@launch
                 }
 
                 // Cache the result

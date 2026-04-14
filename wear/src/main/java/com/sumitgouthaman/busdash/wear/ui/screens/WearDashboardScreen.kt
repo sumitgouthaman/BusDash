@@ -185,12 +185,15 @@ class WearDashboardViewModel : ViewModel() {
                 }
                 lastLocation = location
 
-                // Fetch stops with backoff
+                // Fetch stops with backoff, capped at 3 attempts to avoid infinite spin
+                val MAX_STOP_RETRIES = 3
+                var stopAttempt = 0
                 var backoff = 1000L
                 var sortedStops: List<WearStopWithDistance>? = null
-                while (sortedStops == null) {
+                while (sortedStops == null && stopAttempt < MAX_STOP_RETRIES) {
+                    stopAttempt++
                     try {
-                        Log.d(TAG, "Fetching stops for lat=${location.latitude}, lon=${location.longitude}")
+                        Log.d(TAG, "Fetching stops for lat=${location.latitude}, lon=${location.longitude} (attempt $stopAttempt)")
                         val response = api.getStopsForLocation(
                             key = apiKey,
                             lat = location.latitude,
@@ -199,8 +202,10 @@ class WearDashboardViewModel : ViewModel() {
                         Log.d(TAG, "API response: code=${response.code}, limitExceeded=${response.data.limitExceeded}")
                         if (response.data.limitExceeded) {
                             Log.w(TAG, "Rate limited, backing off ${backoff}ms")
-                            delay(backoff)
-                            backoff = (backoff * 2).coerceAtMost(60_000L)
+                            if (stopAttempt < MAX_STOP_RETRIES) {
+                                delay(backoff)
+                                backoff = (backoff * 2).coerceAtMost(60_000L)
+                            }
                             continue
                         }
                         val rawStops = response.data.list ?: emptyList()
@@ -214,11 +219,17 @@ class WearDashboardViewModel : ViewModel() {
                         }.sortedBy { it.distanceMeters }
                     } catch (e: retrofit2.HttpException) {
                         Log.e(TAG, "HTTP error: ${e.code()} ${e.message()}")
-                        if (e.code() == 429) {
+                        if (e.code() == 429 && stopAttempt < MAX_STOP_RETRIES) {
                             delay(backoff)
                             backoff = (backoff * 2).coerceAtMost(60_000L)
                         } else throw e
                     }
+                }
+                if (sortedStops == null) {
+                    Log.e(TAG, "Failed to load stops after $MAX_STOP_RETRIES attempts (rate limited)")
+                    if (cached == null) _uiState.value = WearDashboardUiState.Error("Server busy")
+                    _isRefreshing.value = false
+                    return@launch
                 }
 
                 Log.d(TAG, "Total sorted stops: ${sortedStops.size}")
