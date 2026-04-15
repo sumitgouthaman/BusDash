@@ -83,6 +83,9 @@ class CommuteNotificationWorker(
             return Result.failure()
         }
 
+        val now = System.currentTimeMillis()
+        val oneHourFromNow = now + TimeUnit.HOURS.toMillis(1)
+
         val formattedArrivals = try {
             val api = ObaApiClient.create(baseUrl)
             val response = api.getArrivalsAndDeparturesForStop(commute.stopId, apiKey)
@@ -90,9 +93,8 @@ class CommuteNotificationWorker(
             allArrivals
                 .filter { it.routeId == commute.routeId }
                 .mapNotNull { it.effectiveDepartureTime() }
-                .filter { it > System.currentTimeMillis() }
+                .filter { it > now && it <= oneHourFromNow }
                 .sorted()
-                .take(3)
                 .map { formatDepartureTime(it) }
         } catch (e: Exception) {
             DebugLogger.log(

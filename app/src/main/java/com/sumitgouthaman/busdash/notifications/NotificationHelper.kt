@@ -19,8 +19,12 @@ object NotificationHelper {
         val contentText = if (formattedArrivals.isEmpty()) {
             "No upcoming departures found"
         } else {
-            formattedArrivals.joinToString(" · ")
+            formattedArrivals.take(3).joinToString(" · ")
         }
+
+        val expandedStyle = NotificationCompat.InboxStyle()
+        formattedArrivals.forEach { expandedStyle.addLine(it) }
+        expandedStyle.setSummaryText("Next hour · Route ${commute.routeShortName}")
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -39,6 +43,7 @@ object NotificationHelper {
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Route ${commute.routeShortName} – ${commute.stopName}")
             .setContentText(contentText)
+            .setStyle(expandedStyle)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

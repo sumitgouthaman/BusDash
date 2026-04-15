@@ -83,6 +83,7 @@ interface OneBusAwayApi {
     @GET("where/arrivals-and-departures-for-stop/{stopId}.json")
     suspend fun getArrivalsAndDeparturesForStop(
         @Path("stopId") stopId: String,
-        @Query("key") key: String
+        @Query("key") key: String,
+        @Query("minutesAfter") minutesAfter: Int = 60
     ): ObaResponse<ArrivalsAndDeparturesEntry>
 }
