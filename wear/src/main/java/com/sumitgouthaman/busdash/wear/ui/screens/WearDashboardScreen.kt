@@ -47,7 +47,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
@@ -76,8 +75,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import com.sumitgouthaman.busdash.wear.data.WearObaApiClient
 
 // --- ViewModel ---
 
@@ -94,7 +94,7 @@ sealed class WearDashboardUiState {
     data class Error(val message: String) : WearDashboardUiState()
 }
 
-class WearDashboardViewModel : ViewModel() {
+class WearDashboardViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<WearDashboardUiState>(WearDashboardUiState.Loading)
     val uiState: StateFlow<WearDashboardUiState> = _uiState
 
@@ -106,6 +106,7 @@ class WearDashboardViewModel : ViewModel() {
     }
 
     private var obaApi: OneBusAwayApi? = null
+    private var obaApiBaseUrl: String? = null
     private var obaApiKey: String? = null
 
     // Arrivals cache
@@ -158,13 +159,10 @@ class WearDashboardViewModel : ViewModel() {
                     return@launch
                 }
 
-                if (obaApi == null) {
+                if (obaApi == null || obaApiBaseUrl != baseUrl) {
                     Log.d(TAG, "Creating Retrofit instance for $baseUrl")
-                    obaApi = Retrofit.Builder()
-                        .baseUrl(baseUrl)
-                        .addConverterFactory(GsonConverterFactory.create())
-                        .build()
-                        .create(OneBusAwayApi::class.java)
+                    obaApi = WearObaApiClient.create(baseUrl, getApplication())
+                    obaApiBaseUrl = baseUrl
                 }
                 val api = obaApi!!
                 obaApiKey = apiKey
