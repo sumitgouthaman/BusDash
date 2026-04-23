@@ -54,6 +54,20 @@
                     android:host="*"
                     android:pathPrefix="/busdash-commute-alert" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/busdash-geofence-alert" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/busdash-geofence-cancel" />
+            </intent-filter>
         </service>
 
     </application>

@@ -10,6 +10,8 @@ import com.sumitgouthaman.busdash.data.CommuteEntry
 
 object NotificationHelper {
     const val COMMUTE_CHANNEL_ID = "commute_alerts"
+    const val GEOFENCE_CHANNEL_ID = "geofence_proximity"
+    const val GEOFENCE_NOTIFICATION_ID = 9001
 
     fun postCommuteNotification(
         context: Context,
@@ -51,5 +53,52 @@ object NotificationHelper {
             .build()
 
         NotificationManagerCompat.from(context).notify(commute.id.hashCode(), notification)
+    }
+
+    fun postGeofenceNotification(
+        context: Context,
+        stopId: String,
+        stopName: String,
+        formattedLines: List<String>
+    ) {
+        val contentText = if (formattedLines.isEmpty()) {
+            "No upcoming departures"
+        } else {
+            formattedLines.take(2).joinToString(" · ")
+        }
+
+        val expandedStyle = NotificationCompat.InboxStyle()
+        val lines = if (formattedLines.isEmpty()) listOf("No upcoming departures") else formattedLines
+        lines.forEach { expandedStyle.addLine(it) }
+        expandedStyle.setSummaryText("Next 90 min · $stopName")
+
+        val tapIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("stopId", stopId)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            GEOFENCE_NOTIFICATION_ID,
+            tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, GEOFENCE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Arrivals at $stopName")
+            .setContentText(contentText)
+            .setStyle(expandedStyle)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(false)
+            .setLocalOnly(true)
+            .build()
+
+        NotificationManagerCompat.from(context).cancelAll()
+        NotificationManagerCompat.from(context).notify(GEOFENCE_NOTIFICATION_ID, notification)
+    }
+
+    fun cancelGeofenceNotification(context: Context) {
+        NotificationManagerCompat.from(context).cancel(GEOFENCE_NOTIFICATION_ID)
     }
 }

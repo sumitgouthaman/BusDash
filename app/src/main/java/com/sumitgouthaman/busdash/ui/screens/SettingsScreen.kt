@@ -1,5 +1,7 @@
 package com.sumitgouthaman.busdash.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
@@ -10,7 +12,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.GeofenceManager
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -25,10 +30,12 @@ fun SettingsScreen(
     val initialKey by appPreferences.apiKey.collectAsState(initial = null)
     val initialUrl by appPreferences.baseUrl.collectAsState(initial = "https://api.pugetsound.onebusaway.org/api/")
     val initialMetric by appPreferences.useMetricDistance.collectAsState(initial = false)
+    val initialRadius by appPreferences.geofenceRadiusMeters.collectAsState(initial = 50)
 
     var apiKeyInput by remember(initialKey) { mutableStateOf(initialKey ?: "") }
     var baseUrlInput by remember(initialUrl) { mutableStateOf(initialUrl) }
     var useMetricInput by remember(initialMetric) { mutableStateOf(initialMetric) }
+    var geofenceRadiusInput by remember(initialRadius) { mutableIntStateOf(initialRadius) }
 
     Scaffold(
         topBar = {
@@ -165,13 +172,60 @@ fun SettingsScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Geofence settings header
+            Text(
+                text = "GEOFENCE",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary,
+                letterSpacing = 1.5.sp
+            )
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Proximity Radius",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "${geofenceRadiusInput}m",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = geofenceRadiusInput.toFloat(),
+                    onValueChange = { geofenceRadiusInput = it.roundToInt() },
+                    valueRange = 50f..500f,
+                    steps = 8,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Distance from a starred stop at which the arrival notification appears.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             Spacer(modifier = Modifier.weight(1f))
 
             // Save button
             Button(
                 onClick = {
                     scope.launch {
-                        appPreferences.saveConfig(apiKeyInput, baseUrlInput, useMetricInput)
+                        appPreferences.saveConfig(apiKeyInput, baseUrlInput, useMetricInput, geofenceRadiusInput)
+                        val hasBackground = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasBackground) GeofenceManager.syncGeofences(context, appPreferences)
                         onSaveSuccess()
                     }
                 },

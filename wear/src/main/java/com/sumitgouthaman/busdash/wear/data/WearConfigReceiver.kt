@@ -34,7 +34,11 @@ class WearConfigReceiver : WearableListenerService() {
     companion object {
         const val CONFIG_PATH = "/busdash-config"
         const val COMMUTE_ALERT_PATH = "/busdash-commute-alert"
+        const val GEOFENCE_ALERT_PATH = "/busdash-geofence-alert"
+        const val GEOFENCE_CANCEL_PATH = "/busdash-geofence-cancel"
         const val COMMUTE_CHANNEL_ID = "wear_commute_alerts"
+        const val GEOFENCE_CHANNEL_ID = "wear_geofence_alerts"
+        private const val GEOFENCE_NOTIFICATION_ID = 9001
         private const val TAG = "WearConfigReceiver"
 
         suspend fun applyDataMap(context: Context, dataMap: DataMap) {
@@ -75,11 +79,20 @@ class WearConfigReceiver : WearableListenerService() {
     }
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
-        if (messageEvent.path == COMMUTE_ALERT_PATH) {
-            val payload = String(messageEvent.data)
-            Log.d(TAG, "Received commute alert message: $payload")
-            scope.launch {
-                handleCommuteAlert(applicationContext, payload)
+        when (messageEvent.path) {
+            COMMUTE_ALERT_PATH -> {
+                val payload = String(messageEvent.data)
+                Log.d(TAG, "Received commute alert message: $payload")
+                scope.launch { handleCommuteAlert(applicationContext, payload) }
+            }
+            GEOFENCE_ALERT_PATH -> {
+                val payload = String(messageEvent.data)
+                Log.d(TAG, "Received geofence alert message: $payload")
+                scope.launch { handleGeofenceAlert(applicationContext, payload) }
+            }
+            GEOFENCE_CANCEL_PATH -> {
+                Log.d(TAG, "Received geofence cancel")
+                NotificationManagerCompat.from(applicationContext).cancel(GEOFENCE_NOTIFICATION_ID)
             }
         }
     }
@@ -90,14 +103,17 @@ class WearConfigReceiver : WearableListenerService() {
     }
 
     private fun ensureNotificationChannel() {
-        val channel = NotificationChannel(
-            COMMUTE_CHANNEL_ID,
-            "Commute Alerts",
-            NotificationManager.IMPORTANCE_HIGH
-        ).apply {
-            description = "Upcoming bus departure notifications"
-        }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(COMMUTE_CHANNEL_ID, "Commute Alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Upcoming bus departure notifications"
+            }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(GEOFENCE_CHANNEL_ID, "Nearby Stop Arrivals", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Geofence proximity arrival notifications"
+            }
+        )
     }
 
     private fun handleCommuteAlert(context: Context, payload: String) {
@@ -135,6 +151,44 @@ class WearConfigReceiver : WearableListenerService() {
             NotificationManagerCompat.from(context).notify(stopId.hashCode(), notification)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to handle commute alert", e)
+        }
+    }
+
+    private fun handleGeofenceAlert(context: Context, payload: String) {
+        try {
+            val json = JSONObject(payload)
+            val stopId = json.getString("stopId")
+            val stopName = json.getString("stopName")
+            val linesArray = json.getJSONArray("formattedLines")
+            val lines = (0 until linesArray.length()).map { linesArray.getString(it) }
+
+            val contentText = if (lines.isEmpty()) "No upcoming departures"
+                              else lines.take(2).joinToString(" · ")
+
+            val tapIntent = Intent(context, WearMainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(WearMainActivity.EXTRA_PRIORITY_STOP_ID, stopId)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                GEOFENCE_NOTIFICATION_ID,
+                tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(context, GEOFENCE_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("Arrivals at $stopName")
+                .setContentText(contentText)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(false)
+                .build()
+
+            NotificationManagerCompat.from(context).cancelAll()
+            NotificationManagerCompat.from(context).notify(GEOFENCE_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to handle geofence alert", e)
         }
     }
 }

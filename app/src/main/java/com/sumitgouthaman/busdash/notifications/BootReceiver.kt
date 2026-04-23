@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.sumitgouthaman.busdash.data.AppPreferences
 import com.sumitgouthaman.busdash.data.DebugLogger
+import com.sumitgouthaman.busdash.data.GeofenceManager
 import com.sumitgouthaman.busdash.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,13 +20,15 @@ class BootReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                val commutes = AppPreferences(context).typicalCommutes.first()
+                val prefs = AppPreferences(context)
+                val commutes = prefs.typicalCommutes.first()
                 CommuteAlarmScheduler.rescheduleAll(context, commutes)
                 val count = commutes.count { it.enabled }
                 DebugLogger.log(
                     context, LogLevel.DEBUG, "BootReceiver",
                     "Device restarted — rescheduled $count upcoming commute alarm${if (count == 1) "" else "s"}"
                 )
+                GeofenceManager.syncGeofences(context, prefs)
             } finally {
                 pendingResult.finish()
             }

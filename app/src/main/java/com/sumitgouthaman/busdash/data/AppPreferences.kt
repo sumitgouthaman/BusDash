@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -26,6 +27,9 @@ class AppPreferences(private val context: Context) {
         val STARRED_ROUTES = stringSetPreferencesKey("starred_routes")
         val USE_METRIC_DISTANCE = booleanPreferencesKey("use_metric_distance")
         val TYPICAL_COMMUTES = stringPreferencesKey("typical_commutes")
+        // Format per entry: "stopId|lat|lon|stopName"
+        val STARRED_STOP_DETAILS = stringSetPreferencesKey("starred_stop_details")
+        val GEOFENCE_RADIUS_METERS = intPreferencesKey("geofence_radius_meters")
     }
 
     val apiKey: Flow<String?> = dataStore.data.map { preferences ->
@@ -53,11 +57,41 @@ class AppPreferences(private val context: Context) {
         preferences[STARRED_ROUTES] ?: emptySet()
     }
 
-    suspend fun saveConfig(apiKey: String, baseUrl: String, useMetric: Boolean) {
+    val geofenceRadiusMeters: Flow<Int> = dataStore.data.map { preferences ->
+        preferences[GEOFENCE_RADIUS_METERS] ?: 50
+    }
+
+    data class StarredStopDetail(val stopId: String, val lat: Double, val lon: Double, val name: String)
+
+    val starredStopDetails: Flow<Set<String>> = dataStore.data.map { preferences ->
+        preferences[STARRED_STOP_DETAILS] ?: emptySet()
+    }
+
+    suspend fun getStarredStopDetails(): List<StarredStopDetail> =
+        starredStopDetails.first().mapNotNull { entry ->
+            val parts = entry.split("|", limit = 4)
+            if (parts.size == 4) {
+                val lat = parts[1].toDoubleOrNull() ?: return@mapNotNull null
+                val lon = parts[2].toDoubleOrNull() ?: return@mapNotNull null
+                StarredStopDetail(parts[0], lat, lon, parts[3])
+            } else null
+        }
+
+    suspend fun saveStarredStopCoords(stopId: String, lat: Double, lon: Double, stopName: String) {
+        dataStore.edit { preferences ->
+            val details = (preferences[STARRED_STOP_DETAILS] ?: emptySet()).toMutableSet()
+            details.removeIf { it.startsWith("$stopId|") }
+            details.add("$stopId|$lat|$lon|$stopName")
+            preferences[STARRED_STOP_DETAILS] = details
+        }
+    }
+
+    suspend fun saveConfig(apiKey: String, baseUrl: String, useMetric: Boolean, geofenceRadiusMeters: Int = 50) {
         dataStore.edit { preferences ->
             preferences[OBA_API_KEY] = apiKey.trim()
             preferences[OBA_BASE_URL] = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
             preferences[USE_METRIC_DISTANCE] = useMetric
+            preferences[GEOFENCE_RADIUS_METERS] = geofenceRadiusMeters.coerceIn(50, 500)
         }
     }
 
@@ -67,13 +101,33 @@ class AppPreferences(private val context: Context) {
             val newStops = currentStops.toMutableSet()
             if (newStops.contains(stopId)) {
                 newStops.remove(stopId)
-                // Optionally remove routes for this stop
                 val currentRoutes = preferences[STARRED_ROUTES] ?: emptySet()
                 preferences[STARRED_ROUTES] = currentRoutes.filterNot { it.startsWith("${stopId}_") }.toSet()
+                val details = preferences[STARRED_STOP_DETAILS] ?: emptySet()
+                preferences[STARRED_STOP_DETAILS] = details.filterNot { it.startsWith("${stopId}|") }.toSet()
             } else {
                 newStops.add(stopId)
             }
             preferences[STARRED_STOPS] = newStops
+        }
+    }
+
+    suspend fun toggleStarredStop(stopId: String, lat: Double, lon: Double, stopName: String) {
+        dataStore.edit { preferences ->
+            val stops = (preferences[STARRED_STOPS] ?: emptySet()).toMutableSet()
+            val details = (preferences[STARRED_STOP_DETAILS] ?: emptySet()).toMutableSet()
+            if (stops.contains(stopId)) {
+                stops.remove(stopId)
+                details.removeIf { it.startsWith("$stopId|") }
+                val routes = preferences[STARRED_ROUTES] ?: emptySet()
+                preferences[STARRED_ROUTES] = routes.filterNot { it.startsWith("${stopId}_") }.toSet()
+            } else {
+                stops.add(stopId)
+                details.removeIf { it.startsWith("$stopId|") }
+                details.add("$stopId|$lat|$lon|$stopName")
+            }
+            preferences[STARRED_STOPS] = stops
+            preferences[STARRED_STOP_DETAILS] = details
         }
     }
 

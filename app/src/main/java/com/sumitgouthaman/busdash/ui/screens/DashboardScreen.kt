@@ -18,10 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sumitgouthaman.busdash.data.AppPreferences
+import com.sumitgouthaman.busdash.data.GeofenceManager
+import com.sumitgouthaman.busdash.data.GeofenceMigration
 import com.sumitgouthaman.busdash.data.LocationHelper
 import com.sumitgouthaman.busdash.data.ObaApiClient
 import com.sumitgouthaman.busdash.data.ObaStop
@@ -43,7 +46,7 @@ import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
 import android.location.Location
 
-class DashboardViewModel : ViewModel() {
+class DashboardViewModel(private val app: android.app.Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val uiState: StateFlow<DashboardUiState> = _uiState
 
@@ -199,9 +202,16 @@ class DashboardViewModel : ViewModel() {
         }
     }
 
-    fun toggleStar(appPreferences: AppPreferences, stopId: String) {
+    fun toggleStar(
+        appPreferences: AppPreferences,
+        stopId: String,
+        lat: Double,
+        lon: Double,
+        stopName: String
+    ) {
         viewModelScope.launch {
-            appPreferences.toggleStarredStop(stopId)
+            appPreferences.toggleStarredStop(stopId, lat, lon, stopName)
+            GeofenceManager.syncGeofences(app, appPreferences)
         }
     }
 
@@ -282,6 +292,36 @@ fun DashboardScreen(
         }
     )
 
+    val coroutineScope = rememberCoroutineScope()
+    var showBackgroundLocationRationale by remember { mutableStateOf(false) }
+
+    val backgroundLocationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { granted ->
+            if (granted) {
+                coroutineScope.launch {
+                    GeofenceMigration.backfillIfNeeded(context, appPreferences)
+                    GeofenceManager.syncGeofences(context, appPreferences)
+                }
+            }
+        }
+    )
+
+    LaunchedEffect(Unit) {
+        val hasFine = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val hasBackground = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasFine && !hasBackground) {
+            showBackgroundLocationRationale = true
+        } else if (hasFine) {
+            GeofenceMigration.backfillIfNeeded(context, appPreferences)
+            GeofenceManager.syncGeofences(context, appPreferences)
+        }
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(lifecycleOwner) {
@@ -341,6 +381,30 @@ fun DashboardScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
+        if (showBackgroundLocationRationale) {
+            AlertDialog(
+                onDismissRequest = { showBackgroundLocationRationale = false },
+                title = { Text("Background Location") },
+                text = {
+                    Text(
+                        "Allow location access \"All the time\" so BusDash can show bus arrivals " +
+                        "when you're near a starred stop, even when the app is closed."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showBackgroundLocationRationale = false
+                        backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    }) { Text("Allow") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBackgroundLocationRationale = false }) {
+                        Text("Not now")
+                    }
+                }
+            )
+        }
+
         val pullToRefreshState = rememberPullToRefreshState()
         PullToRefreshBox(
             isRefreshing = isRefreshing && uiState !is DashboardUiState.Loading,
@@ -403,7 +467,7 @@ fun DashboardScreen(
                                     externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
                                     onClick = { onStopClick(stopWD.stop.id, stopWD.stop.name, stopWD.stop.lat, stopWD.stop.lon) },
-                                    onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
+                                    onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id, stopWD.stop.lat, stopWD.stop.lon, stopWD.stop.name) }
                                 )
                             }
                         }
@@ -446,7 +510,7 @@ fun DashboardScreen(
                                     externalRefreshTrigger = state.refreshTrigger,
                                     fetchArrivals = { force -> viewModel.getArrivalsForStop(stopWD.stop.id, force) },
                                     onClick = { onStopClick(stopWD.stop.id, stopWD.stop.name, stopWD.stop.lat, stopWD.stop.lon) },
-                                    onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id) }
+                                    onStarClick = { viewModel.toggleStar(appPreferences, stopWD.stop.id, stopWD.stop.lat, stopWD.stop.lon, stopWD.stop.name) }
                                 )
                             }
 
