@@ -79,7 +79,6 @@ class GeofenceNotificationWorker(
                 .map { (route, items) ->
                     val times = items
                         .sortedBy { it.effectiveDepartureTime() }
-                        .take(2)
                         .mapNotNull { a ->
                             val t = a.effectiveDepartureTime() ?: return@mapNotNull null
                             TIME_FORMAT.format(Date(t))

@@ -26,7 +26,7 @@ object NotificationHelper {
 
         val expandedStyle = NotificationCompat.InboxStyle()
         formattedArrivals.forEach { expandedStyle.addLine(it) }
-        expandedStyle.setSummaryText("Next hour · Route ${commute.routeShortName}")
+        expandedStyle.setSummaryText("Next 90 min · Route ${commute.routeShortName}")
 
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -64,7 +64,7 @@ object NotificationHelper {
         val contentText = if (formattedLines.isEmpty()) {
             "No upcoming departures"
         } else {
-            formattedLines.take(2).joinToString(" · ")
+            formattedLines.take(4).joinToString(" · ")
         }
 
         val expandedStyle = NotificationCompat.InboxStyle()
