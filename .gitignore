@@ -17,3 +17,4 @@ local.properties
 /.idea/deploymentTargetSelector.xml
 /.idea/deviceManager.xml
 /.idea/studiobot.xml
+*.aab
